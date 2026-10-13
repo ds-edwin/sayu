@@ -248,7 +248,7 @@ function StorageDialog({
         </button>
       </header>
       <p>
-        편집 내용은 먼저 이 기기에 저장됩니다. 다른 기기에서 이어 쓰려면 같은
+        편집 내용은 먼저 이 기기에 저장됩니다. 다른 기기에서 이어 쓰려면
         JSON 파일을 OneDrive에 저장하고 다른 기기에서 열 수 있습니다. 자동 동기화는 Microsoft 앱 등록 후 연결할 수 있습니다.
       </p>
       <p className="storage-message" role="status">

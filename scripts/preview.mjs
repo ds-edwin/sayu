@@ -9,6 +9,6 @@ createServer(async (req,res) => {
   if (!url.pathname.startsWith('/sayu/')) {res.writeHead(404).end(); return;}
   const file = resolve(root, decodeURIComponent(url.pathname.slice(6)) || 'index.html');
   if (!file.startsWith(root + '/') && !file.startsWith(root + '\\')) {res.writeHead(403).end(); return;}
-  try {res.writeHead(200, {'Content-Type':types[extname(file)] || 'application/octet-stream','Cache-Control':'no-cache'});res.end(await readFile(file));}
+  try {const body = await readFile(file); res.writeHead(200, {'Content-Type':types[extname(file)] || 'application/octet-stream','Cache-Control':'no-cache'});res.end(body);}
   catch {res.writeHead(404).end();}
 }).listen(4173,'127.0.0.1',()=>console.log('Preview http://127.0.0.1:4173/sayu/'));
