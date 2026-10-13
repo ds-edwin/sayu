@@ -1,0 +1,9 @@
+node_modules/
+portable-dist/
+source-v0.4/
+*.zip
+public/pwa-assets/
+public/offline.html
+public/pwa-precache.json
+.env*
+browser-results/
