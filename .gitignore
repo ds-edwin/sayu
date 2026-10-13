@@ -7,3 +7,4 @@ public/offline.html
 public/pwa-precache.json
 .env*
 browser-results/
+*.tsbuildinfo
