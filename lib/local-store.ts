@@ -33,6 +33,24 @@ export async function setSetting(key: string, value: unknown) {
     tx.onerror = () => reject(tx.error);
   });
 }
+export async function archiveCurrentWorkspace() {
+  const db = await database();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction("records", "readwrite"), store = tx.objectStore("records");
+    const request = store.get("workspace");
+    request.onsuccess = () => {
+      const current = request.result as LocalWorkspace | undefined;
+      if (!current) return;
+      const recovery = store.get("recovery");
+      recovery.onsuccess = () => store.put([
+        { date: new Date().toISOString(), document: current.document }, ...(recovery.result ?? []),
+      ].slice(0, 20), "recovery");
+    };
+    tx.oncomplete = () => resolve();
+    tx.onabort = () => reject(tx.error);
+    tx.onerror = () => reject(tx.error);
+  });
+}
 export async function writeLocal(
   document: Workspace,
   expectedRevision: number,

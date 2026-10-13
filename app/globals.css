@@ -439,8 +439,8 @@ h1 {
 }
 .knowledge-card {
   width: 245px;
-  border: 1px solid #e0e3ee;
-  border-left: 3px solid var(--kind);
+  border: 2px solid var(--kind);
+  border-left: 4px solid var(--kind);
   border-radius: 9px;
   background: #fff;
   padding: 16px 18px 13px;
@@ -506,8 +506,8 @@ h1 {
   height: 30px;
 }
 .react-flow__minimap {
-  width: 140px;
-  height: 90px;
+  width: 180px;
+  height: 120px;
   border: 1px solid #e5e7f0;
   border-radius: 8px;
   overflow: hidden;
@@ -1343,9 +1343,6 @@ h1 {
     color: #7867ba;
     font-size: 13px;
   }
-  .react-flow__minimap {
-    display: none;
-  }
   .knowledge-card {
     width: 235px;
   }
@@ -1808,4 +1805,40 @@ h1 {
 .storage-dialog {border:0;border-radius:20px;padding:24px;width:min(720px,calc(100% - 24px));max-height:90dvh;overflow:auto;margin:auto;color:#24223a;box-shadow:0 20px 80px #17213f44;}
 .storage-dialog::backdrop {background:#17213f88}.storage-dialog header {display:flex;align-items:center;justify-content:space-between;gap:12px}.storage-dialog h2 {margin:0}.storage-dialog section {padding:14px 0;border-top:1px solid #e5e3ee}.storage-dialog p,.storage-dialog small,.storage-dialog li {line-height:1.7}.storage-dialog small {color:#6d6681}.storage-dialog code {overflow-wrap:anywhere}.storage-dialog label {display:block;margin:10px 0}.storage-dialog input:not([type=checkbox]) {display:block;width:100%;padding:10px;border:1px solid #d4cede;border-radius:8px;margin-top:4px}.storage-dialog button {min-height:40px;}.storage-actions {display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.storage-dialog button {padding:8px 12px;border-radius:8px;border:1px solid #ddd6ef}.storage-dialog button:disabled {opacity:.5}.storage-message,.storage-preview,.storage-conflicts {background:#f0eefb;border-radius:10px;padding:12px;overflow-wrap:anywhere}.storage-dialog .storage-check {display:flex;align-items:center;gap:8px}.storage-dialog details {padding:10px 0}.storage-dialog summary {cursor:pointer}
 
-.sidebar {overflow-y:auto;} .sidebar-bottom {flex-shrink:0;}
+.sidebar {overflow:hidden;}
+.sidebar[hidden] {display:none;}
+.sidebar > :not(.map-tree) {flex-shrink:0;}
+.sidebar .map-tree {flex:1 1 0;min-height:0;max-height:none !important;overflow-y:auto;}
+.sidebar-bottom {flex-shrink:0;margin-top:0;padding-top:10px;}
+.sidebar-toggle {display:inline-flex;}
+.sidebar .brand {padding-bottom:20px;}
+.sidebar .capture-button {margin-bottom:20px;}
+.sidebar .maps-heading {margin-top:18px;}
+.filter-tabs button {flex-shrink:0;white-space:nowrap;}
+.sidebar-close {display:none;}
+.map-view-tools {display:flex;align-items:center;gap:6px;}
+.map-management-actions {display:flex;align-items:center;justify-content:space-between;gap:12px;}
+.drag-grip {width:18px;min-width:18px;padding:0;align-self:stretch;touch-action:none;cursor:grab;color:#a8a0ba;}
+.drag-grip:active {cursor:grabbing;}
+.map-tree-row {user-select:none;}
+.map-tree-row .nav-item {cursor:grab;}
+.map-tree .folder-group.drop-target,.tree-root-label.drop-target {background:#e9e2ff;outline:2px solid #8c71dc;outline-offset:-2px;}
+.map-tree .folder-group.drop-target > .folder-row {background:#ddd1fc;border-radius:6px;}
+.drop-hint {display:block;padding:0 10px 8px;color:#6441b6;font-size:11px;font-weight:600;}
+.map-tree-row.node-drop-target {background:#dcf5e8;outline:2px solid #27976a;outline-offset:-2px;}
+.inbox-row {user-select:none;}
+.inbox-row .inbox-open {cursor:grab;}
+.inbox-grip {width:22px;min-width:22px;}
+.workspace-drag-preview {position:fixed;z-index:1000;pointer-events:none;background:#fff;border:1px solid #a292cf;box-shadow:0 8px 30px #34235433;border-radius:9px;padding:10px 14px;max-width:250px;}
+.workspace-drag-preview b {display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;}
+.workspace-drag-preview span {display:block;margin-top:4px;font-size:11px;color:#745e9f;}
+.react-flow__minimap-svg {display:block;cursor:crosshair;}
+.react-flow__minimap {box-sizing:content-box;}
+.react-flow__edge.selected .react-flow__edge-path {filter:drop-shadow(0 0 3px #6554d944);}
+@media (max-width:640px) {
+  .sidebar-close {display:inline-flex;}
+  .drag-grip {width:24px;min-width:24px;}
+  .map-view-tools {gap:2px;}
+  .map-toolbar {gap:6px;}
+  .map-toolbar .filter-tabs {min-width:0;overflow-x:auto;}
+}

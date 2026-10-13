@@ -32,8 +32,10 @@ import {
   Trash2,
   Download,
   LayoutGrid,
-  Menu,
-  BookOpen,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Map as MapIcon,
+  GripVertical,
   Focus,
   LogOut,
   Copy,
@@ -44,7 +46,10 @@ import Editor from "./editor";
 import StorageControls from "./storage-controls";
 import KindIcon from "./kind-icon";
 import MapTree from "./map-tree";
-import { removeNodes, copyNodes } from "@/lib/graph-operations";
+import { removeNodes, copyNodes, removeMap as removeWorkspaceMap, moveMapToFolder, moveInboxNode } from "@/lib/graph-operations";
+import { archiveCurrentWorkspace } from "@/lib/local-store";
+import { relationAppearance } from "@/lib/graph-appearance";
+import { useWorkspaceDrag } from "./use-workspace-drag";
 import ClickConnection, { type PendingConnection } from "./click-connection";
 import { useWorkspace } from "./use-workspace";
 import {
@@ -72,6 +77,7 @@ function KnowledgeCard({ data, selected }: NodeProps<CardNode>) {
   return (
     <div
       className={"knowledge-card " + (selected ? "selected" : "")}
+      data-node-kind={n.kind}
       style={{ "--kind": colors[n.kind] } as React.CSSProperties}
     >
       <Handle
@@ -157,7 +163,8 @@ export default function Workspace() {
     [captureBody, setCaptureBody] = useState(""),
     [newMap, setNewMap] = useState(false),
     [mapName, setMapName] = useState(""),
-    [sidebar, setSidebar] = useState(false),
+    [sidebar, setSidebar] = useState(() => typeof window === "undefined" || window.matchMedia("(min-width: 641px)").matches),
+    [miniMap, setMiniMap] = useState(true),
     [listMode, setListMode] = useState(false),
     [kindFilter, setKindFilter] = useState("전체"),
     [target, setTarget] = useState(""),
@@ -177,6 +184,18 @@ export default function Workspace() {
     Record<string, { width: number; height: number }>
   >({});
   const flow = useRef<ReactFlowInstance<CardNode> | null>(null);
+  const workspaceDrag = useWorkspaceDrag((dragged, destination) => {
+    if (dragged.type === "map" && destination.type === "folder") {
+      update(d => moveMapToFolder(d, dragged.id, destination.id || null));
+    } else if (dragged.type === "node" && destination.type === "map") {
+      update(d => moveInboxNode(d, dragged.id, destination.id));
+      setMapId(destination.id); setView("map"); setSelected(null); setSelectedIds([dragged.id]);
+      setEdgeId(null); setKindFilter("전체"); closeMobileSidebar();
+    }
+  });
+  useEffect(() => {
+    if (workspaceDrag.drag?.type === "node") setSidebar(true);
+  }, [workspaceDrag.drag?.type]);
   const map = doc?.maps.find((m) => m.id === mapId) ?? doc?.maps[0];
   const activeMap = map?.id ?? mapId;
   const item = doc?.nodes.find((n) => n.id === selected);
@@ -192,6 +211,15 @@ export default function Workspace() {
       ) ?? [],
     [doc, query],
   );
+  function closeMobileSidebar() {
+    if (window.matchMedia("(max-width: 640px)").matches) setSidebar(false);
+  }
+  async function deleteMap(id: string) {
+    await flush();
+    await archiveCurrentWorkspace();
+    update(d => removeWorkspaceMap(d, id));
+    setSelected(null); setSelectedIds([]); setEdgeId(null); setPending(null); setContext(null);
+  }
   useEffect(() => {
     if (!doc) return;
     const available = new Set(doc.nodes.map((n) => n.id));
@@ -202,6 +230,7 @@ export default function Workspace() {
     );
   }, [doc]);
   useEffect(() => {
+    setEdgeId(null);
     const n = doc?.nodes.find((n) => n.id === selected);
     setSelectedIds(
       n &&
@@ -225,7 +254,7 @@ export default function Workspace() {
         setQuery("");
         setSelected(null);
         setEdgeId(null);
-        setSidebar(false);
+        closeMobileSidebar();
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
@@ -261,7 +290,7 @@ export default function Workspace() {
     setSelectedIds([n.id]);
     setEdgeId(null);
     setQuery("");
-    setSidebar(false);
+    closeMobileSidebar();
     setTarget("");
     if (n.mapId) {
       setMapId(n.mapId);
@@ -329,6 +358,10 @@ export default function Workspace() {
   function removeNode(n: KnowledgeNode) {
     deleteNodes([n.id]);
   }
+  function deleteEdge(id: string) {
+    update(d => ({ ...d, edges: d.edges.filter(edge => edge.id !== id) }));
+    setEdgeId(null);
+  }
   function duplicateNodes(ids: string[]) {
     if (!doc) return;
     const result = copyNodes(doc, ids);
@@ -381,14 +414,15 @@ export default function Workspace() {
         setPending(null);
         setContext(null);
       }
-      if (e.key === "Delete" && selectedIds.length) {
+      if ((e.key === "Delete" || e.key === "Backspace") && (edgeId || selectedIds.length)) {
         e.preventDefault();
-        deleteNodes(selectedIds);
+        if (edgeId) deleteEdge(edgeId);
+        else deleteNodes(selectedIds);
       }
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [selectedIds, capture, newMap, undo, redo, update]);
+  }, [selectedIds, edgeId, capture, newMap, undo, redo, update]);
   function exportData() {
     if (!doc) return;
     const url = URL.createObjectURL(
@@ -413,27 +447,30 @@ export default function Workspace() {
   const visibleIds = new Set(nodes.map((n) => n.id));
   const edges = (doc?.edges ?? [])
     .filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target))
-    .map((e) => ({
+    .map((e) => {
+      const appearance = relationAppearance[e.relation];
+      return ({
       ...e,
-      label: e.relation,
-      type: "smoothstep",
+      selected: e.id === edgeId,
+      ariaLabel: `${doc?.nodes.find(n => n.id === e.source)?.title} → ${doc?.nodes.find(n => n.id === e.target)?.title}: ${e.relation}`,
+      label: `${appearance.symbol} ${e.relation}`,
+      type: appearance.path,
+      interactionWidth: 24,
       markerEnd: {
-        type: MarkerType.ArrowClosed,
-        color: e.relation === "반박" ? "#d07178" : "#a1a6bd",
+        type: appearance.closed ? MarkerType.ArrowClosed : MarkerType.Arrow,
+        color: appearance.color,
+        width: 18,
+        height: 18,
       },
       style: {
-        stroke:
-          e.relation === "반박"
-            ? "#d07178"
-            : e.id === edgeId
-              ? "#6254d9"
-              : "#a1a6bd",
-        strokeWidth: e.id === edgeId ? 2.5 : 1.5,
+        stroke: appearance.color,
+        strokeDasharray: appearance.dash,
+        strokeWidth: appearance.width + (e.id === edgeId ? 1.5 : 0),
       },
-      labelStyle: { fill: "#6b7089", fontSize: 12 },
-      labelBgStyle: { fill: "#f6f7fb" },
+      labelStyle: { fill: appearance.color, fontSize: 12, fontWeight: 700 },
+      labelBgStyle: { fill: "#ffffff", stroke: appearance.color, strokeOpacity: .3 },
       labelBgPadding: [7, 4] as [number, number],
-    }));
+    }); });
   if (needsLogin)
     return (
       <main className="login-shell">
@@ -469,7 +506,7 @@ export default function Workspace() {
       </main>
     );
   return (
-    <div className="app-shell">
+    <div className="app-shell" onClickCapture={workspaceDrag.consumeClick}>
       {sidebar && (
         <button
           className="sidebar-scrim"
@@ -477,7 +514,7 @@ export default function Workspace() {
           onClick={() => setSidebar(false)}
         />
       )}
-      <aside className={"sidebar " + (sidebar ? "open" : "")}>
+      <aside id="workspace-sidebar" className="sidebar open" hidden={!sidebar}>
         <div className="brand">
           <div className="logo-mark">
             <Brain size={24} />
@@ -487,6 +524,7 @@ export default function Workspace() {
             <span>THOUGHT MAP</span>
           </div>
           <span className="version">v0.4</span>
+          <button className="icon-button sidebar-close" aria-label="사이드바 닫기" onClick={() => setSidebar(false)}><X size={18} /></button>
         </div>
         <button
           className="primary capture-button"
@@ -500,7 +538,7 @@ export default function Workspace() {
           onClick={() => {
             setView("inbox");
             setSelected(null);
-            setSidebar(false);
+            closeMobileSidebar();
           }}
         >
           <Inbox size={18} /> Inbox{" "}
@@ -510,6 +548,9 @@ export default function Workspace() {
           doc={doc}
           activeMap={view === "map" ? activeMap : null}
           update={update}
+          onDelete={deleteMap}
+          startDrag={workspaceDrag.start}
+          dropTarget={workspaceDrag.target}
           onCreate={(folderId) => {
             setNewMapFolder(folderId);
             setNewMap(true);
@@ -520,19 +561,10 @@ export default function Workspace() {
             setSelected(null);
             setSelectedIds([]);
             setEdgeId(null);
-            setSidebar(false);
+            closeMobileSidebar();
             setKindFilter("전체");
           }}
         />
-        <div className="sidebar-note">
-          <BookOpen size={19} />
-          <b>생각은 연결될 때 깊어집니다.</b>
-          <p>
-            떠오른 생각은 Inbox에,
-            <br />
-            발전시킬 생각은 맵에.
-          </p>
-        </div>
         <div className="sidebar-bottom">
           <StorageControls flush={flush} replace={replace} />
           <button className="nav-item" onClick={exportData}>
@@ -582,11 +614,14 @@ export default function Workspace() {
             </button>
           </div>
           <button
-            className="icon-button mobile-menu"
-            aria-label="메뉴 열기"
-            onClick={() => setSidebar(true)}
+            className="icon-button sidebar-toggle"
+            aria-label={sidebar ? "왼쪽 패널 접기" : "왼쪽 패널 펼치기"}
+            title={sidebar ? "왼쪽 패널 접기" : "왼쪽 패널 펼치기"}
+            aria-expanded={sidebar}
+            aria-controls="workspace-sidebar"
+            onClick={() => setSidebar(value => !value)}
           >
-            <Menu size={21} />
+            {sidebar ? <PanelLeftClose size={21} /> : <PanelLeftOpen size={21} />}
           </button>
           <div className="breadcrumb">
             내 작업실
@@ -711,10 +746,16 @@ export default function Workspace() {
                 </button>
               ))}
             </div>
+            <div className="map-view-tools">
+              <button className="icon-button" aria-label="맵 중앙 맞추기" title="맵 중앙 맞추기" disabled={listMode || !mapNodes.length}
+                onClick={() => void flow.current?.fitView({ padding: .25, maxZoom: 1 })}><Focus size={17} /></button>
+              <button className="icon-button" aria-label={miniMap ? "미니맵 숨기기" : "미니맵 보기"} title={miniMap ? "미니맵 숨기기" : "미니맵 보기"}
+                aria-pressed={miniMap} disabled={listMode} onClick={() => setMiniMap(value => !value)}><MapIcon size={17} /></button>
             <span className="connection-count">
               <Link2 size={14} />
               {edges.length}개의 연결
             </span>
+            </div>
           </div>
         )}
         <div
@@ -749,9 +790,12 @@ export default function Workspace() {
                       }
                       key={n.id}
                     >
+                      <button className="drag-grip inbox-grip" aria-label={n.title + " 드래그 이동"} title="끌어서 왼쪽 맵으로 이동"
+                        onPointerDown={e => workspaceDrag.start(e, { type: "node", id: n.id, label: n.title })}><GripVertical size={18} /></button>
                       <button
                         className="inbox-open"
                         onClick={() => openNode(n)}
+                        onPointerDown={e => workspaceDrag.start(e, { type: "node", id: n.id, label: n.title })}
                       >
                         <span className="inbox-icon">
                           <FileText size={20} />
@@ -772,18 +816,7 @@ export default function Workspace() {
                         aria-label={n.title + " 맵으로 이동"}
                         value=""
                         onChange={(e) => {
-                          patch(n.id, {
-                            mapId: e.target.value,
-                            position: {
-                              x: 120,
-                              y:
-                                120 +
-                                doc.nodes.filter(
-                                  (v) => v.mapId === e.target.value,
-                                ).length *
-                                  70,
-                            },
-                          });
+                          update(d => moveInboxNode(d, n.id, e.target.value));
                           setSelected(null);
                         }}
                       >
@@ -856,12 +889,14 @@ export default function Workspace() {
                     return;
                   }
                   setSelected(n.id);
+                  setSelectedIds([n.id]);
                   setEdgeId(null);
                   setTarget("");
                 }}
                 onEdgeClick={(_, e) => {
                   setEdgeId(e.id);
                   setSelected(null);
+                  setSelectedIds([]);
                 }}
                 onPaneClick={() => {
                   setPending(null);
@@ -959,18 +994,28 @@ export default function Workspace() {
                 <ClickConnection pending={pending} cursor={cursor} />
                 <Background gap={22} size={1} color="#dce0ec" />
                 <Controls showInteractive={false} />
-                <MiniMap
+                {miniMap && <MiniMap<CardNode>
+                  style={{ width: 180, height: 120 }}
+                  ariaLabel="미니맵"
                   nodeColor={(n) => colors[(n.data.item as KnowledgeNode).kind]}
+                  nodeStrokeColor={(n) => colors[n.data.item.kind]}
+                  maskStrokeColor="#7b6cae"
+                  maskStrokeWidth={2}
                   maskColor="rgba(245,247,252,.7)"
+                  onClick={(_, position) => void flow.current?.setCenter(position.x, position.y, { zoom: flow.current.getZoom() })}
+                  onNodeClick={(event, node) => {
+                    event.stopPropagation();
+                    void flow.current?.setCenter(node.position.x + (node.measured?.width ?? 245) / 2, node.position.y + (node.measured?.height ?? 140) / 2, { zoom: flow.current.getZoom() });
+                  }}
                   pannable
                   zoomable
-                />
+                />}
                 <div className="canvas-hint">
                   <span>
                     {pending
                       ? "다른 연결점을 클릭 · Esc로 취소"
                       : selectedIds.length > 1
-                        ? `${selectedIds.length}개 선택 · Delete로 삭제`
+                        ? `${selectedIds.length}개 선택 · Delete / Backspace로 삭제`
                         : "Ctrl/⌘ 클릭 · Shift 드래그로 다중 선택"}
                   </span>
                   <i /> 연결점 클릭 또는 드래그
@@ -1133,6 +1178,7 @@ export default function Workspace() {
                       onClick={() => {
                         setEdgeId(e.id);
                         setSelected(null);
+                        setSelectedIds([]);
                       }}
                     >
                       <Link2 size={14} />
@@ -1194,6 +1240,7 @@ export default function Workspace() {
                 <button
                   className="danger icon-button"
                   aria-label="노드 삭제"
+                  title="선택한 노드 삭제 (Delete / Backspace)"
                   onClick={() => removeNode(item)}
                 >
                   <Trash2 size={18} />
@@ -1256,13 +1303,8 @@ export default function Workspace() {
                 </p>
                 <button
                   className="secondary danger"
-                  onClick={() => {
-                    update((d) => ({
-                      ...d,
-                      edges: d.edges.filter((e) => e.id !== edgeId),
-                    }));
-                    setEdgeId(null);
-                  }}
+                  title="선택한 연결 삭제 (Delete / Backspace)"
+                  onClick={() => deleteEdge(selectedEdge.id)}
                 >
                   <Trash2 size={16} />
                   연결 삭제
@@ -1283,6 +1325,11 @@ export default function Workspace() {
           </button>
         </footer>
       </main>
+      {workspaceDrag.drag && <div className="workspace-drag-preview" role="status"
+        style={{ left: Math.min(workspaceDrag.drag.x + 14, window.innerWidth - 260), top: Math.min(workspaceDrag.drag.y + 14, window.innerHeight - 80) }}>
+        <b>{workspaceDrag.drag.label}</b>
+        <span>{workspaceDrag.target ? `${workspaceDrag.target.label}로 이동` : workspaceDrag.drag.type === "map" ? "폴더 위에 놓으세요" : "왼쪽 맵 위에 놓으세요"}</span>
+      </div>}
       {context && (
         <>
           <div
@@ -1408,7 +1455,7 @@ export default function Workspace() {
               setSelected(null);
               setNewMap(false);
               setMapName("");
-              setSidebar(false);
+              closeMobileSidebar();
             }}
           >
             <div className="modal-heading">

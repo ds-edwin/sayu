@@ -1,5 +1,5 @@
 import { z } from "zod";
-export const kinds = ["질문", "주장", "근거", "개념", "사례", "메모"] as const;
+export const kinds = ["메모", "질문", "주장", "근거", "개념", "사례"] as const;
 export const relations = ["관련", "지지", "반박", "원인", "구체화"] as const;
 const id = z.string().min(1).max(100);
 const nodeSchema = z.object({

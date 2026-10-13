@@ -7,6 +7,7 @@ import {
   writeLocal,
   parsePortable,
   type LocalWorkspace,
+  archiveCurrentWorkspace,
 } from "../lib/local-store.ts";
 import {
   findHeads,
@@ -29,6 +30,9 @@ test("local revision guard prevents a stale tab from overwriting saved changes",
     (await getSetting<LocalWorkspace>("workspace"))?.document,
     updated,
   );
+  await archiveCurrentWorkspace();
+  assert.deepEqual((await getSetting<{ document: unknown }[]>("recovery"))?.[0].document, updated);
+  assert.equal((await getSetting<LocalWorkspace>("workspace"))?.revision, rev + 1);
   await writeLocal(initial, rev + 1, true);
   const recovery = await getSetting<{ document: unknown }[]>("recovery");
   assert.deepEqual(recovery?.[0].document, updated);

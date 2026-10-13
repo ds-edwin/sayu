@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Database, Cloud, Download, X } from "lucide-react";
 import {
   getSetting,
@@ -26,7 +27,7 @@ type Props = {
 };
 export default function StorageControls({ flush, replace }: Props) {
   const [open, setOpen] = useState(false),
-    [message, setMessage] = useState("기기 저장 · 저장소 선택"),
+    [message, setMessage] = useState(""),
     [busy, setBusy] = useState(false),
     [offline, setOffline] = useState(false),
     [choices, setChoices] = useState<RemoteChoice[]>([]),
@@ -110,18 +111,13 @@ export default function StorageControls({ flush, replace }: Props) {
       <button className="nav-item" onClick={() => setOpen(true)}>
         <Database size={17} /> 저장소 · 설치
       </button>
-      <small className="storage-summary" role="status">
-        {message}
-        <br />
-        {offline ? "오프라인 실행 준비됨" : "오프라인 자료 준비 중"}
-      </small>
-      {open && (
+      {open && createPortal(
         <StorageDialog
-          {...{ flush, replace, busy, message, choices, choiceSource }}
+          {...{ flush, replace, busy, message, choices, choiceSource, offline }}
           sync={(resolution, source) => synchronize.current(resolution, source)}
           close={() => setOpen(false)}
           report={setMessage}
-        />
+        />, document.body
       )}
     </>
   );
@@ -133,6 +129,7 @@ function StorageDialog({
   message,
   choices,
   choiceSource,
+  offline,
   sync,
   close,
   report,
@@ -141,6 +138,7 @@ function StorageDialog({
   message: string;
   choices: RemoteChoice[];
   choiceSource: SyncSource;
+  offline: boolean;
   sync: (resolution?: string, source?: SyncSource) => Promise<void>;
   close: () => void;
   report: (message: string) => void;
@@ -277,9 +275,7 @@ function StorageDialog({
         편집 내용은 먼저 이 기기에 저장됩니다. 다른 기기에서 이어 쓰려면
         OneDrive가 동기화하는 기기 폴더를 연결하거나 JSON 파일을 다른 기기에서 열 수 있습니다.
       </p>
-      <p className="storage-message" role="status">
-        {message}
-      </p>
+      {message && <p className="storage-message" role="status">{message}</p>}
       <section>
         <h3>1. 앱처럼 설치</h3>
         <p>
@@ -290,6 +286,7 @@ function StorageDialog({
           <b>Windows:</b> Edge/Chrome 주소창의 설치 버튼.
         </p>
         <small>
+          {offline ? "오프라인 자료 설치 완료. " : "오프라인 자료를 준비하고 있습니다. "}
           첫 실행과 설치는 온라인에서 진행하세요. 앱과 오프라인 자료가
           내려받아진 뒤에는 인터넷 없이 편집할 수 있습니다. 앱을 삭제하거나
           브라우저 데이터를 지우기 전에는 반드시 내보내세요.

@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Folder,
   FolderOpen,
@@ -11,23 +12,35 @@ import {
   MoreHorizontal,
   ChevronRight,
   X,
+  GripVertical,
 } from "lucide-react";
 import type { Workspace } from "@/lib/model";
+import { moveMapToFolder } from "@/lib/graph-operations";
+import type { DragItem, DropTarget } from "./use-workspace-drag";
 export default function MapTree({
   doc,
   activeMap,
   onSelect,
   onCreate,
   update,
+  onDelete,
+  startDrag,
+  dropTarget,
 }: {
   doc: Workspace;
   activeMap: string | null;
   onSelect: (id: string) => void;
   onCreate: (folderId: string | null) => void;
   update: (fn: (d: Workspace) => Workspace) => void;
+  onDelete: (id: string) => Promise<void>;
+  startDrag: (event: React.PointerEvent<HTMLElement>, item: DragItem) => void;
+  dropTarget: DropTarget | null;
 }) {
   const [closed, setClosed] = useState<Set<string>>(new Set());
   const [edit, setEdit] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [error, setError] = useState("");
   function folder(parentId: string | null) {
     const name = window.prompt("새 폴더 이름");
     if (!name?.trim()) return;
@@ -77,16 +90,7 @@ export default function MapTree({
     }));
   }
   function moveMap(id: string, folderId: string | null) {
-    update((d) => ({
-      ...d,
-      maps: d.maps.map((m) => (m.id === id ? { ...m, folderId } : m)),
-    }));
-  }
-  function drop(e: React.DragEvent, folderId: string | null) {
-    e.preventDefault();
-    e.stopPropagation();
-    const id = e.dataTransfer.getData("application/x-thought-map");
-    if (doc.maps.some((m) => m.id === id)) moveMap(id, folderId);
+    update((d) => moveMapToFolder(d, id, folderId));
   }
   function branch(parentId: string | null, depth = 0): React.ReactNode {
     return (
@@ -98,12 +102,9 @@ export default function MapTree({
             return (
               <div
                 key={f.id}
-                className="folder-group"
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                }}
-                onDrop={(e) => drop(e, f.id)}
+                className={"folder-group " + (dropTarget?.type === "folder" && dropTarget.id === f.id ? "drop-target" : "")}
+                data-drop-folder={f.id}
+                data-drop-label={path(f.id)}
               >
                 <div className="folder-row">
                   <button
@@ -160,6 +161,7 @@ export default function MapTree({
                     </button>
                   </div>
                 </div>
+                {dropTarget?.type === "folder" && dropTarget.id === f.id && <small className="drop-hint">이 폴더로 이동</small>}
                 {!collapsed && branch(f.id, depth + 1)}
               </div>
             );
@@ -169,14 +171,16 @@ export default function MapTree({
           .map((m) => (
             <div
               key={m.id}
-              className={"map-tree-row " + (activeMap === m.id ? "active" : "")}
-              draggable
-              onDragStart={(e) => {
-                e.dataTransfer.setData("application/x-thought-map", m.id);
-                e.dataTransfer.effectAllowed = "move";
-              }}
+              className={"map-tree-row " + (activeMap === m.id ? "active " : "") + (dropTarget?.type === "map" && dropTarget.id === m.id ? "node-drop-target" : "")}
+              data-drop-map={m.id}
+              data-drop-label={m.name}
             >
-              <button className="nav-item" onClick={() => onSelect(m.id)}>
+              <button className="drag-grip" aria-label={m.name + " 드래그 이동"} title="끌어서 폴더로 이동"
+                onPointerDown={e => startDrag(e, { type: "map", id: m.id, label: m.name })}>
+                <GripVertical size={13} />
+              </button>
+              <button className="nav-item" onClick={() => onSelect(m.id)}
+                onPointerDown={e => startDrag(e, { type: "map", id: m.id, label: m.name })}>
                 <Network size={16} />
                 <span className="truncate">{m.name}</span>
                 <span className="count">
@@ -186,7 +190,7 @@ export default function MapTree({
               <button
                 className="map-options icon-button"
                 aria-label={m.name + " 관리"}
-                onClick={() => setEdit(m.id)}
+                onClick={() => { setError(""); setDeleteConfirm(false); setEdit(m.id); }}
               >
                 <MoreHorizontal size={16} />
               </button>
@@ -226,28 +230,41 @@ export default function MapTree({
       <nav
         className="map-tree"
         aria-label="맵 폴더"
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => drop(e, null)}
+        data-drop-folder=""
+        data-drop-label="내 맵 (최상위)"
       >
-        <div className="tree-root-label">
+        <div className={"tree-root-label " + (dropTarget?.type === "folder" && !dropTarget.id ? "drop-target" : "")}>
           내 맵 <small>맵을 끌어 폴더로 이동</small>
         </div>
         {branch(null)}
       </nav>
-      {map && (
-        <div className="modal-backdrop" onClick={() => setEdit(null)}>
+      {map && createPortal(
+        <div className="modal-backdrop" onClick={() => { if (!deleting) setEdit(null); }}>
           <div
             className="modal"
             role="dialog"
             aria-modal="true"
             aria-label="맵 관리"
             onClick={(e) => e.stopPropagation()}
+            onKeyDown={e => {
+              if (e.key === "Escape") {
+                e.stopPropagation();
+                if (!deleting) { if (deleteConfirm) setDeleteConfirm(false); else setEdit(null); }
+              }
+              if (e.key === "Tab") {
+                const controls = Array.from(e.currentTarget.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), select:not(:disabled)"));
+                const first = controls[0], last = controls[controls.length - 1];
+                if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+                else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+              }
+            }}
           >
             <div className="modal-heading">
               <h2>맵 관리</h2>
               <button
                 className="icon-button"
                 aria-label="맵 관리 닫기"
+                disabled={deleting}
                 onClick={() => setEdit(null)}
               >
                 <X />
@@ -256,7 +273,9 @@ export default function MapTree({
             <label className="field-label">
               맵 이름
               <input
+                autoFocus
                 defaultValue={map.name}
+                disabled={deleting}
                 maxLength={100}
                 onBlur={(e) => {
                   if (e.target.value.trim())
@@ -275,6 +294,7 @@ export default function MapTree({
               폴더로 이동
               <select
                 value={map.folderId ?? ""}
+                disabled={deleting}
                 onChange={(e) => moveMap(map.id, e.target.value || null)}
               >
                 <option value="">내 맵 (최상위)</option>
@@ -285,11 +305,26 @@ export default function MapTree({
                 ))}
               </select>
             </label>
-            <button className="primary" onClick={() => setEdit(null)}>
-              완료
-            </button>
+            <p className="muted">맵 삭제 시 안의 생각은 Inbox에 보관되고 연결은 해제됩니다. 삭제 전 작업실은 저장소의 복원 기록에 남습니다.</p>
+            {error && <p role="alert">{error}</p>}
+            {deleteConfirm && <div className="storage-preview" role="alertdialog" aria-label="맵 삭제 확인">
+              <p>‘{map.name}’ 맵을 삭제할까요? {doc.nodes.filter(n => n.mapId === map.id).length}개의 생각은 Inbox에 보관됩니다.</p>
+              <div className="map-management-actions">
+                <button autoFocus className="secondary" disabled={deleting} onClick={() => setDeleteConfirm(false)}>취소</button>
+                <button className="primary" disabled={deleting} onClick={async () => {
+                  setDeleting(true);
+                  try { await onDelete(map.id); setEdit(null); }
+                  catch (e) { setError(e instanceof Error ? e.message : "맵을 삭제하지 못했습니다."); }
+                  finally { setDeleting(false); }
+                }}>삭제 확인</button>
+              </div>
+            </div>}
+            <div className="map-management-actions">
+              <button className="secondary danger" disabled={deleting || deleteConfirm} onClick={() => setDeleteConfirm(true)}><Trash2 size={16} /> 맵 삭제</button>
+              <button className="primary" disabled={deleting} onClick={() => setEdit(null)}>완료</button>
+            </div>
           </div>
-        </div>
+        </div>, document.body
       )}
     </>
   );
