@@ -9,18 +9,13 @@ import {
   findHeads,
   parseSnapshot,
   snapshotName,
+  workspaceSignature,
+  SyncConflict,
   type Snapshot,
 } from "./sync-graph.ts";
 import type { Workspace } from "./model.ts";
 export type DriveConfig = { clientId: string; folder: string };
-export type RemoteChoice = { id: string; date: string; document: Workspace };
-export class SyncConflict extends Error {
-  constructor(public choices: RemoteChoice[]) {
-    super(
-      "여러 기기에서 변경되었습니다. 보관할 내용을 선택하세요. 모든 원본은 OneDrive에 남습니다.",
-    );
-  }
-}
+export { SyncConflict, type RemoteChoice } from "./sync-graph.ts";
 const scopes = ["Files.ReadWrite.AppFolder"];
 let instance: PublicClientApplication | undefined,
   instanceId = "";
@@ -215,10 +210,10 @@ export async function syncDrive(
   );
   const text = JSON.stringify(local),
     remoteText =
-      remote.length === 1 ? JSON.stringify(remote[0].document) : undefined;
+      remote.length === 1 ? workspaceSignature(remote[0].document) : undefined;
   let decision = decideSync(
-    text,
-    base?.document,
+    workspaceSignature(local),
+    base ? workspaceSignature(JSON.parse(base.document)) : undefined,
     base?.id,
     heads.map((h) => h.id),
     remoteText,
@@ -270,7 +265,7 @@ export async function syncDrive(
   }
   await setSetting("baseline:" + target.key, {
     id,
-    document: JSON.stringify(chosen),
+    document: workspaceSignature(chosen),
   });
   const after = findHeads((await list(target.base, access)).map((f) => f.name));
   if (after.length !== 1 || after[0].id !== id)

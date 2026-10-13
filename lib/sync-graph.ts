@@ -1,4 +1,15 @@
 import { documentSchema, type Workspace } from "./model.ts";
+export type RemoteChoice = { id: string; date: string; document: Workspace };
+export function workspaceSignature(document: Workspace) {
+  return JSON.stringify(documentSchema.parse(document));
+}
+export class SyncConflict extends Error {
+  choices: RemoteChoice[];
+  constructor(choices: RemoteChoice[]) {
+    super("서로 다른 변경 내용이 있습니다. 사용할 내용을 선택하세요. 저장소의 원본 버전은 모두 보관됩니다.");
+    this.choices = choices;
+  }
+}
 export type Snapshot = {
   format: "sayu-snapshot";
   version: 1;
@@ -32,7 +43,7 @@ export function findHeads(names: string[]) {
     ancestors = new Set(records.flatMap((r) => r.parents));
   if (records.some((r) => r.parents.some((p) => !ids.has(p))))
     throw Error(
-      "OneDrive 버전 기록 일부가 없습니다. 파일 삭제 또는 동기화 지연을 확인하세요.",
+      "저장소 버전 기록 일부가 없습니다. 파일 삭제 또는 동기화 지연을 확인하세요.",
     );
   const heads = records.filter((r) => !ancestors.has(r.id));
   if (records.length && !heads.length)
@@ -46,9 +57,11 @@ export function parseSnapshot(raw: unknown, expectedId: string): Snapshot {
     s.format !== "sayu-snapshot" ||
     s.version !== 1 ||
     s.id !== expectedId ||
+    typeof s.createdAt !== "string" ||
+    !Number.isFinite(Date.parse(s.createdAt)) ||
     !Array.isArray(s.parents)
   )
-    throw Error("올바른 OneDrive 버전이 아닙니다.");
+    throw Error("올바른 작업실 버전이 아닙니다.");
   snapshotName(s.id, s.parents);
   return { ...s, document: documentSchema.parse(s.document) };
 }
@@ -64,7 +77,7 @@ export function decideSync(
   if (!heads.length) {
     if (baseId)
       throw Error(
-        "연결된 OneDrive 기록이 사라졌습니다. 새 저장소를 선택하거나 기록을 복구하세요.",
+        "연결된 저장소 기록이 사라졌습니다. 새 저장소를 선택하거나 기록을 복구하세요.",
       );
     return "push";
   }

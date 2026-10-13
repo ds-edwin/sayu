@@ -18,6 +18,8 @@ import {
 } from "@/lib/onedrive";
 import type { Workspace } from "@/lib/model";
 import { appBaseUrl } from "@/lib/app-url";
+import { chooseLocalFolder, disconnectLocalFolder, permitLocalFolder, supportsLocalFolder, syncLocalFolder, FolderPermissionError, type FolderConfig } from "@/lib/local-folder";
+type SyncSource = "drive" | "folder";
 type Props = {
   flush: () => Promise<Workspace>;
   replace: (doc: Workspace, expected?: string) => Promise<void>;
@@ -27,29 +29,32 @@ export default function StorageControls({ flush, replace }: Props) {
     [message, setMessage] = useState("기기 저장 · 저장소 선택"),
     [busy, setBusy] = useState(false),
     [offline, setOffline] = useState(false),
-    [choices, setChoices] = useState<RemoteChoice[]>([]);
+    [choices, setChoices] = useState<RemoteChoice[]>([]),
+    [choiceSource, setChoiceSource] = useState<SyncSource>("drive");
   const running = useRef(false),
     actions = useRef({ flush, replace });
   actions.current = { flush, replace };
-  const synchronize = useRef<(resolution?: string) => Promise<void>>(
+  const synchronize = useRef<(resolution?: string, source?: SyncSource) => Promise<void>>(
     async () => {},
   );
-  synchronize.current = async (resolution) => {
+  synchronize.current = async (resolution, source = "drive") => {
     if (running.current) return;
     running.current = true;
     setBusy(true);
-    setMessage("OneDrive 동기화 중…");
+    setMessage(source === "folder" ? "선택한 폴더 확인 중…" : "OneDrive 동기화 중…");
     try {
       const doc = await actions.current.flush();
-      setMessage(await syncDrive(doc, actions.current.replace, resolution));
+      setMessage(await (source === "folder" ? syncLocalFolder : syncDrive)(doc, actions.current.replace, resolution));
       setChoices([]);
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "동기화 실패");
       if (e instanceof SyncConflict) {
-        await setSetting("auto-sync", false);
+        await setSetting(source === "folder" ? "folder-auto-sync" : "auto-sync", false);
         setChoices(e.choices);
+        setChoiceSource(source);
         setOpen(true);
       }
+      if (e instanceof FolderPermissionError) await setSetting("folder-auto-sync", false);
     } finally {
       running.current = false;
       setBusy(false);
@@ -69,6 +74,11 @@ export default function StorageControls({ flush, replace }: Props) {
     void navigator.storage?.persist?.();
     let debounce: ReturnType<typeof setTimeout>;
     const attempt = async () => {
+      if (document.visibilityState !== "visible") return;
+      if ((await getSetting("folder-auto-sync")) && (await getSetting("folder-config"))) {
+        await synchronize.current(undefined, "folder");
+        return;
+      }
       if (
         document.visibilityState === "visible" &&
         navigator.onLine &&
@@ -84,11 +94,15 @@ export default function StorageControls({ flush, replace }: Props) {
     const timer = setInterval(() => void attempt(), 60000);
     window.addEventListener("sayu-local-saved", saved);
     window.addEventListener("online", saved);
+    window.addEventListener("focus", saved);
+    document.addEventListener("visibilitychange", saved);
     return () => {
       clearTimeout(debounce);
       clearInterval(timer);
       window.removeEventListener("sayu-local-saved", saved);
       window.removeEventListener("online", saved);
+      window.removeEventListener("focus", saved);
+      document.removeEventListener("visibilitychange", saved);
     };
   }, []);
   return (
@@ -103,8 +117,8 @@ export default function StorageControls({ flush, replace }: Props) {
       </small>
       {open && (
         <StorageDialog
-          {...{ flush, replace, busy, message, choices }}
-          sync={(resolution) => synchronize.current(resolution)}
+          {...{ flush, replace, busy, message, choices, choiceSource }}
+          sync={(resolution, source) => synchronize.current(resolution, source)}
           close={() => setOpen(false)}
           report={setMessage}
         />
@@ -118,6 +132,7 @@ function StorageDialog({
   busy,
   message,
   choices,
+  choiceSource,
   sync,
   close,
   report,
@@ -125,7 +140,8 @@ function StorageDialog({
   busy: boolean;
   message: string;
   choices: RemoteChoice[];
-  sync: (resolution?: string) => Promise<void>;
+  choiceSource: SyncSource;
+  sync: (resolution?: string, source?: SyncSource) => Promise<void>;
   close: () => void;
   report: (message: string) => void;
 }) {
@@ -136,6 +152,9 @@ function StorageDialog({
     [auto, setAuto] = useState(false),
     [working, setWorking] = useState(false),
     [last, setLast] = useState(""),
+    [localFolder, setLocalFolder] = useState<FolderConfig | null>(null),
+    [folderAuto, setFolderAuto] = useState(false),
+    [folderLast, setFolderLast] = useState(""),
     [recovery, setRecovery] = useState<{ date: string; document: Workspace }[]>(
       [],
     ),
@@ -151,12 +170,18 @@ function StorageDialog({
     }
     setAuto(!!(await getSetting("auto-sync")));
     setLast((await getSetting<string>("last-sync")) ?? "");
+    setLocalFolder((await getSetting<FolderConfig>("folder-config")) ?? null);
+    setFolderAuto(!!(await getSetting("folder-auto-sync")));
+    setFolderLast((await getSetting<string>("folder-last-sync")) ?? "");
     setRecovery((await getSetting("recovery")) ?? []);
   }
   useEffect(() => {
     dialog.current?.showModal();
     void refresh().catch((e) => report(e.message));
   }, []);
+  useEffect(() => {
+    if (!busy) void refresh().catch((e) => report(e.message));
+  }, [busy]);
   async function run(action: () => Promise<void>) {
     if (blocked) return;
     setWorking(true);
@@ -164,6 +189,7 @@ function StorageDialog({
       await action();
       await refresh();
     } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") return;
       report(e instanceof Error ? e.message : "작업 실패");
     } finally {
       setWorking(false);
@@ -249,7 +275,7 @@ function StorageDialog({
       </header>
       <p>
         편집 내용은 먼저 이 기기에 저장됩니다. 다른 기기에서 이어 쓰려면
-        JSON 파일을 OneDrive에 저장하고 다른 기기에서 열 수 있습니다. 자동 동기화는 Microsoft 앱 등록 후 연결할 수 있습니다.
+        OneDrive가 동기화하는 기기 폴더를 연결하거나 JSON 파일을 다른 기기에서 열 수 있습니다.
       </p>
       <p className="storage-message" role="status">
         {message}
@@ -270,7 +296,50 @@ function StorageDialog({
         </small>
       </section>
       <section>
-        <h3>2. OneDrive 개인용 · 선택 사항</h3>
+        <h3>2. 기기 폴더 연결 · Microsoft 앱 등록 불필요</h3>
+        <p>
+          Mac·Windows의 Chrome/Edge에서 OneDrive 안의 사유 전용 폴더를 선택하세요.
+          각 기기에서 같은 클라우드 폴더를 선택하고 OneDrive 앱의 동기화가 완료되었는지 확인하세요.
+          다른 문서는 수정하지 않으며 사유의 버전 파일은 sayu-versions 폴더에 보관됩니다.
+        </p>
+        <p><b>연결된 폴더:</b> {localFolder?.handle.name ?? "없음"}</p>
+        {supportsLocalFolder() ? (
+          <div className="storage-actions">
+            <button disabled={blocked} onClick={() => void run(async () => {
+              await chooseLocalFolder();
+              await sync(undefined, "folder");
+            })}>기기 폴더 선택 · 연결</button>
+            <button disabled={blocked || !localFolder} onClick={() => void run(async () => {
+              await permitLocalFolder();
+              await sync(undefined, "folder");
+            })}>폴더 접근 허용 · 동기화</button>
+            <button disabled={blocked || !localFolder} onClick={() => void run(async () => {
+              await disconnectLocalFolder();
+              report("폴더 연결을 해제했습니다. 기기 내용과 폴더 파일은 보관됩니다.");
+            })}>폴더 연결 해제</button>
+          </div>
+        ) : <p>이 브라우저는 폴더 자동 저장을 지원하지 않습니다. iPad·Safari에서는 아래의 JSON 파일 열기·저장을 이용하세요.</p>}
+        <label className="storage-check">
+          <input type="checkbox" checked={folderAuto} disabled={blocked || !localFolder || !supportsLocalFolder()}
+            onChange={e => {
+              const value = e.target.checked;
+              void run(async () => {
+                if (value) await permitLocalFolder();
+                await setSetting("folder-auto-sync", value);
+                if (value) await setSetting("auto-sync", false);
+                if (value) await sync(undefined, "folder");
+              });
+            }} /> 앱을 열어 둔 동안 폴더 자동 저장·불러오기
+        </label>
+        <small>
+          저장 뒤 약 5초 및 1분마다 확인합니다. 브라우저를 다시 열면 폴더 접근 허용이 필요할 수 있습니다.
+          이 표시는 기기 폴더에 저장된 시점이며 OneDrive 업로드 완료 표시는 아닙니다.
+          마지막 성공: {folderLast ? new Date(folderLast).toLocaleString() : "없음"}
+        </small>
+        <p>기존 JSON 백업은 아래 ‘JSON 파일 열기’로 가져온 뒤 연결하세요. 다른 내용이 있는 폴더를 처음 연결하면 사용할 버전을 선택합니다.</p>
+      </section>
+      <section>
+        <h3>3. OneDrive 온라인 연결 · 선택 사항</h3>
         <p>
           앱 전용 폴더 아래의 작업실 이름을 지정합니다. 모든 기기에 같은 Client
           ID와 작업실 이름을 입력하세요.
@@ -364,6 +433,7 @@ function StorageDialog({
               const value = e.target.checked;
               setAuto(value);
               void setSetting("auto-sync", value);
+              if (value) { setFolderAuto(false); void setSetting("folder-auto-sync", false); }
             }}
           />{" "}
           앱을 열어 둔 동안 자동 동기화
@@ -373,18 +443,19 @@ function StorageDialog({
           멈춥니다. 마지막 성공:{" "}
           {last ? new Date(last).toLocaleString() : "없음"}
         </small>
+      </section>
         {choices.length > 0 && (
-          <div className="storage-conflicts">
-            <b>충돌 해결 — 원본 버전은 삭제하지 않습니다</b>
+          <section className="storage-conflicts">
+            <b>{choiceSource === "folder" ? "기기 폴더" : "OneDrive"} 버전 선택 — 원본 버전은 삭제하지 않습니다</b>
             <button
               disabled={blocked}
               onClick={() => {
                 if (
                   confirm(
-                    "이 기기의 내용을 공유 최신 버전으로 지정할까요? 다른 버전은 OneDrive에 보관됩니다.",
+                    "이 기기의 내용을 최신 버전으로 지정할까요? 저장소의 다른 버전은 모두 보관됩니다.",
                   )
                 )
-                  void sync("local");
+                  void run(() => sync("local", choiceSource));
               }}
             >
               이 기기 내용 유지
@@ -403,21 +474,20 @@ function StorageDialog({
                   onClick={() => {
                     if (
                       confirm(
-                        "이 OneDrive 버전을 사용하겠습니까? 이 기기 내용은 복원 기록에 보관됩니다.",
+                        "이 저장소 버전을 사용하겠습니까? 이 기기 내용은 복원 기록에 보관됩니다.",
                       )
                     )
-                      void sync(choice.id);
+                      void run(() => sync(choice.id, choiceSource));
                   }}
                 >
                   이 버전 사용
                 </button>
               </div>
             ))}
-          </div>
+          </section>
         )}
-      </section>
       <section>
-        <h3>3. 파일 저장소 · 백업</h3>
+        <h3>4. 파일 저장소 · 백업</h3>
         <p>
           JSON 파일을 OneDrive·iCloud·기기 폴더에 저장하고 다른 기기에서 열 수
           있습니다. 이 방식은 수동 이동이며 자동 동기화가 아닙니다.

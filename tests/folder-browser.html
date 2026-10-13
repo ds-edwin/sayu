@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ko"><meta charset="utf-8"><title>사유 폴더 저장 엔진 검증</title>
+<body><h1>브라우저 폴더 저장 엔진 검증</h1>
+<p>브라우저 전용 파일 시스템에서 두 기기의 저장·불러오기와 충돌 보존을 확인합니다. 실제 OneDrive 연결 검증과는 별개입니다.</p>
+<button id="run">검증 실행</button><pre id="result" role="status">실행 대기</pre>
+<script type="module">
+  import { syncFolderContents } from "../lib/local-folder.ts";
+  import { exampleWorkspace } from "../lib/model.ts";
+  import { findHeads, SyncConflict } from "../lib/sync-graph.ts";
+  import { getSetting, setSetting } from "../lib/local-store.ts";
+  const output = document.querySelector("#result");
+  document.querySelector("#run").onclick = async () => {
+    try {
+      const root = await navigator.storage.getDirectory();
+      const folder = await root.getDirectoryHandle("sayu-test-" + crypto.randomUUID(), { create: true });
+      await setSetting("folder-test-handle", folder);
+      const restored = await getSetting("folder-test-handle");
+      if (!await folder.isSameEntry(restored)) throw Error("폴더 핸들 복원 실패");
+      const original = exampleWorkspace();
+      let a = structuredClone(original), b = structuredClone(original), baseA, baseB;
+      const syncA = resolution => syncFolderContents(folder, a, baseA, async next => { a = next; }, async next => { baseA = next; }, resolution);
+      const syncB = resolution => syncFolderContents(restored, b, baseB, async next => { b = next; }, async next => { baseB = next; }, resolution);
+      await syncA(); await syncB();
+      a.nodes[0].title = "브라우저 폴더 저장 성공";
+      await syncA(); await syncB();
+      if (b.nodes[0].title !== a.nodes[0].title) throw Error("다른 기기 읽기 실패");
+      a.nodes[0].title = "Mac 수정";
+      b.nodes[0].title = "Windows 수정";
+      await Promise.allSettled([syncA(), syncB()]);
+      let conflict = false;
+      try { await syncA(); } catch(e) { if (e instanceof SyncConflict) conflict = true; else throw e; }
+      if (!conflict) throw Error("충돌 감지 실패");
+      await syncA("local"); await syncB();
+      const names = [];
+      for await (const entry of folder.values()) names.push(entry.name);
+      if (names.length !== 5 || findHeads(names).length !== 1 || b.nodes[0].title !== "Mac 수정") throw Error("버전 보존 실패");
+      output.textContent = "통과: 실제 브라우저 파일 쓰기·읽기\n통과: IndexedDB 폴더 핸들 저장·복원\n통과: 두 기기의 변경 내용 전달\n통과: 동시 수정 충돌 감지·선택\n통과: 원본 5개 보존\n주의: OS 폴더 선택기와 OneDrive 업로드는 이 검사에 포함되지 않습니다.";
+    } catch(e) { output.textContent = "실패: " + e.stack; }
+  };
+</script></body></html>
