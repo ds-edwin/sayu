@@ -10,7 +10,7 @@ await writeFile('portable-dist/pwa-precache.json', JSON.stringify(assets));
 const hash = createHash('sha256');
 for (const path of assets) hash.update(await readFile('portable-dist/' + path));
 const version = hash.digest('hex').slice(0,16);
-const worker = (await readFile('public/sw.js','utf8')).replace(/const CACHE=PREFIX+'[^']+';/, `const CACHE=PREFIX+'${version}';`);
+const worker = (await readFile('public/sw.js','utf8')).replace("const CACHE=PREFIX+'v04';", `const CACHE=PREFIX+'${version}';`);
 await writeFile('portable-dist/sw.js', worker);
 await writeFile('portable-dist/.nojekyll', '');
 console.log('Static PWA built:', version);
