@@ -10,6 +10,7 @@ export function useWorkspace() {
   const [status, setStatus] = useState("불러오는 중");
   const [error, setError] = useState("");
   const [needsLogin, setNeedsLogin] = useState(false);
+  const [generation, setGeneration] = useState(0);
   const current = useRef<Workspace | null>(null),
     revision = useRef(0),
     persisted = useRef(""),
@@ -50,6 +51,7 @@ export function useWorkspace() {
       history.current.reset();
       conflict.current = false;
       setDocument(parsed);
+      setGeneration(value => value + 1);
       setStatus("기기에 저장됨");
       setNeedsLogin(false);
     } catch (e) {
@@ -129,6 +131,7 @@ export function useWorkspace() {
         }
         current.current = parsed;
         setDocument(parsed);
+        setGeneration(value => value + 1);
         history.current.reset();
         refreshHistory((v) => v + 1);
         setError("");
@@ -206,6 +209,7 @@ export function useWorkspace() {
     status,
     error,
     needsLogin,
+    generation,
     load,
     update,
     save,

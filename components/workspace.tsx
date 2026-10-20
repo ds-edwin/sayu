@@ -50,6 +50,8 @@ import { removeNodes, copyNodes, removeMap as removeWorkspaceMap, moveMapToFolde
 import { archiveCurrentWorkspace } from "@/lib/local-store";
 import { relationAppearance } from "@/lib/graph-appearance";
 import { useWorkspaceDrag } from "./use-workspace-drag";
+import { useNodeClipboard } from "./use-node-clipboard";
+import { pasteNodeClipboard } from "@/lib/node-clipboard";
 import ClickConnection, { type PendingConnection } from "./click-connection";
 import { useWorkspace } from "./use-workspace";
 import {
@@ -69,6 +71,7 @@ type CardNode = Node<
       e: React.MouseEvent,
     ) => void;
     pending: PendingConnection | null;
+    cutting: boolean;
   },
   "knowledge"
 >;
@@ -76,7 +79,7 @@ function KnowledgeCard({ data, selected }: NodeProps<CardNode>) {
   const n = data.item;
   return (
     <div
-      className={"knowledge-card " + (selected ? "selected" : "")}
+      className={"knowledge-card " + (selected ? "selected " : "") + (data.cutting ? "cut-pending" : "")}
       data-node-kind={n.kind}
       style={{ "--kind": colors[n.kind] } as React.CSSProperties}
     >
@@ -142,6 +145,7 @@ export default function Workspace() {
     status,
     error,
     needsLogin,
+    generation,
     flush, replace,
     load,
     update,
@@ -184,6 +188,7 @@ export default function Workspace() {
     Record<string, { width: number; height: number }>
   >({});
   const flow = useRef<ReactFlowInstance<CardNode> | null>(null);
+  const pastedSelection = useRef<string[] | null>(null);
   const workspaceDrag = useWorkspaceDrag((dragged, destination) => {
     if (dragged.type === "map" && destination.type === "folder") {
       update(d => moveMapToFolder(d, dragged.id, destination.id || null));
@@ -202,6 +207,55 @@ export default function Workspace() {
   const selectedEdge = doc?.edges.find((e) => e.id === edgeId);
   const inbox = doc?.nodes.filter((n) => !n.mapId) ?? [];
   const mapNodes = doc?.nodes.filter((n) => n.mapId === activeMap) ?? [];
+  const nodeClipboard = useNodeClipboard({
+    workspace: doc,
+    selectedIds: selectedIds.filter(id => doc?.nodes.some(n =>
+      n.id === id && (view === "map" ? n.mapId === activeMap : n.mapId === null) &&
+      (kindFilter === "전체" || n.kind === kindFilter))),
+    generation,
+    blocked: capture || newMap,
+    inMap: view === "map",
+    paste: (clipboard, cut, offset) => {
+      const bounds = document.querySelector(".react-flow")?.getBoundingClientRect();
+      const center = bounds && flow.current?.screenToFlowPosition({
+        x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2,
+      });
+      let result: ReturnType<typeof pasteNodeClipboard> | undefined;
+      update(current => {
+        const source = cut
+          ? current.nodes.filter(n => clipboard.nodes.some(c => c.id === n.id))
+          : clipboard.nodes;
+        const left = Math.min(...source.map(n => n.position.x));
+        const top = Math.min(...source.map(n => n.position.y));
+        const width = Math.max(...source.map(n => n.position.x)) - left + 245;
+        const height = Math.max(...source.map(n => n.position.y)) - top + 140;
+        const anchor = center && (cut || source.some(n => n.mapId !== activeMap))
+          ? { x: center.x - width / 2 + offset, y: center.y - height / 2 + offset }
+          : { x: left + 45 + offset, y: top + 45 + offset };
+        const moving = new Set(cut ? source.map(n => n.id) : []);
+        const occupied = new Set(current.nodes.filter(n => n.mapId === activeMap && !moving.has(n.id))
+          .map(n => `${Math.round(n.position.x / 30)},${Math.round(n.position.y / 30)}`));
+        // Keep a newly pasted group from sitting exactly on existing nodes.
+        for (let attempt = 0; attempt < 12 && source.some(n => occupied.has(
+          `${Math.round((n.position.x - left + anchor.x) / 30)},${Math.round((n.position.y - top + anchor.y) / 30)}`,
+        )); attempt++) { anchor.x += 45; anchor.y += 45; }
+        result = pasteNodeClipboard(current, clipboard, activeMap, {
+          cut, anchor,
+        });
+        return result.document;
+      });
+      if (!result) throw Error("작업실을 불러온 뒤 다시 붙여넣으세요.");
+      pastedSelection.current = kindFilter !== "전체" ? result.ids : null;
+      setKindFilter("전체");
+      setListMode(false);
+      setSelected(null);
+      setSelectedIds(result.ids);
+      setEdgeId(null);
+      setPending(null);
+      setContext(null);
+      return result;
+    },
+  });
   const searchResults = useMemo(
     () =>
       doc?.nodes.filter((n) =>
@@ -231,6 +285,13 @@ export default function Workspace() {
   }, [doc]);
   useEffect(() => {
     setEdgeId(null);
+    if (pastedSelection.current) {
+      setSelectedIds(pastedSelection.current);
+      pastedSelection.current = null;
+      setPending(null);
+      setContext(null);
+      return;
+    }
     const n = doc?.nodes.find((n) => n.id === selected);
     setSelectedIds(
       n &&
@@ -441,7 +502,7 @@ export default function Workspace() {
       type: "knowledge",
       position: n.position,
       measured: measurements[n.id],
-      data: { item: n, onHandle: handleClick, pending },
+      data: { item: n, onHandle: handleClick, pending, cutting: nodeClipboard.cutIds.includes(n.id) },
       selected: selectedIds.includes(n.id),
     }));
   const visibleIds = new Set(nodes.map((n) => n.id));
@@ -1014,8 +1075,8 @@ export default function Workspace() {
                   <span>
                     {pending
                       ? "다른 연결점을 클릭 · Esc로 취소"
-                      : selectedIds.length > 1
-                        ? `${selectedIds.length}개 선택 · Delete / Backspace로 삭제`
+                      : selectedIds.length > 0
+                        ? `${selectedIds.length}개 선택 · Ctrl/⌘ C 복사 · X 잘라내기 · V 붙여넣기`
                         : "Ctrl/⌘ 클릭 · Shift 드래그로 다중 선택"}
                   </span>
                   <i /> 연결점 클릭 또는 드래그
@@ -1325,6 +1386,7 @@ export default function Workspace() {
           </button>
         </footer>
       </main>
+      {nodeClipboard.message && <div className="clipboard-notice" role="status">{nodeClipboard.message}</div>}
       {workspaceDrag.drag && <div className="workspace-drag-preview" role="status"
         style={{ left: Math.min(workspaceDrag.drag.x + 14, window.innerWidth - 260), top: Math.min(workspaceDrag.drag.y + 14, window.innerHeight - 80) }}>
         <b>{workspaceDrag.drag.label}</b>

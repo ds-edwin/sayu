@@ -1835,6 +1835,8 @@ h1 {
 .react-flow__minimap-svg {display:block;cursor:crosshair;}
 .react-flow__minimap {box-sizing:content-box;}
 .react-flow__edge.selected .react-flow__edge-path {filter:drop-shadow(0 0 3px #6554d944);}
+.knowledge-card.cut-pending {opacity:.55;border-style:dashed;}
+.clipboard-notice {position:fixed;bottom:64px;left:50%;transform:translateX(-50%);z-index:1100;max-width:calc(100vw - 32px);padding:12px 18px;border:1px solid #d8cfee;border-radius:12px;background:#fff;color:#51406f;box-shadow:0 8px 30px #34235422;font-size:13px;line-height:1.6;pointer-events:none;}
 @media (max-width:640px) {
   .sidebar-close {display:inline-flex;}
   .drag-grip {width:24px;min-width:24px;}
