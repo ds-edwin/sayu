@@ -1844,3 +1844,11 @@ h1 {
   .map-toolbar {gap:6px;}
   .map-toolbar .filter-tabs {min-width:0;overflow-x:auto;}
 }
+.pwa-update-notice {position:fixed;right:20px;bottom:64px;z-index:60;display:flex;align-items:center;gap:16px;max-width:min(620px,calc(100vw - 32px));padding:14px 16px;background:#fff;border:1px solid #cfc4ee;border-radius:12px;box-shadow:0 8px 30px #2d23452b;}
+.pwa-update-notice b {font-size:14px;}
+.pwa-update-notice p {margin:4px 0 0;font-size:13px;line-height:1.6;overflow-wrap:anywhere;}
+.pwa-update-progress {max-width:calc(100vw - 32px);width:420px;margin:auto;padding:28px;border:0;border-radius:16px;color:#24223a;box-shadow:0 12px 60px #17213f44;}
+.pwa-update-progress::backdrop {background:#17213f88;}
+.pwa-update-progress h2 {font-size:19px;margin:0 0 12px;}
+.pwa-update-progress p {margin:0;line-height:1.7;}
+@media (max-width:640px) {.pwa-update-notice {left:12px;right:12px;bottom:60px;max-width:none;gap:10px;flex-wrap:wrap;}.pwa-update-notice .primary {margin-left:auto;}}

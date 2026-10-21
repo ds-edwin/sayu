@@ -2,6 +2,9 @@ const BASE = new URL('./', self.location.href);
 const PREFIX = 'sayu-offline-' + BASE.pathname + '-';
 const CACHE=PREFIX+'v04';
 const asset = path => new URL(path, BASE).href;
+self.addEventListener('message', event => {
+  if (event.data?.type === 'SKIP_WAITING') event.waitUntil(self.skipWaiting());
+});
 self.addEventListener('install', event => event.waitUntil((async () => {
   const response = await fetch(asset('pwa-precache.json'), {cache: 'no-store'});
   if (!response.ok) throw Error('Precache unavailable');

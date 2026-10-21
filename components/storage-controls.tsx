@@ -20,6 +20,7 @@ import {
 import type { Workspace } from "@/lib/model";
 import { appBaseUrl } from "@/lib/app-url";
 import { chooseLocalFolder, disconnectLocalFolder, permitLocalFolder, supportsLocalFolder, syncLocalFolder, FolderPermissionError, type FolderConfig } from "@/lib/local-folder";
+import { usePwaUpdates } from "./use-pwa-updates";
 type SyncSource = "drive" | "folder";
 type Props = {
   flush: () => Promise<Workspace>;
@@ -29,17 +30,17 @@ export default function StorageControls({ flush, replace }: Props) {
   const [open, setOpen] = useState(false),
     [message, setMessage] = useState(""),
     [busy, setBusy] = useState(false),
-    [offline, setOffline] = useState(false),
     [choices, setChoices] = useState<RemoteChoice[]>([]),
     [choiceSource, setChoiceSource] = useState<SyncSource>("drive");
   const running = useRef(false),
     actions = useRef({ flush, replace });
   actions.current = { flush, replace };
+  const pwa = usePwaUpdates(() => actions.current.flush());
   const synchronize = useRef<(resolution?: string, source?: SyncSource) => Promise<void>>(
     async () => {},
   );
   synchronize.current = async (resolution, source = "drive") => {
-    if (running.current) return;
+    if (running.current || pwa.applying) return;
     running.current = true;
     setBusy(true);
     setMessage(source === "folder" ? "선택한 폴더 확인 중…" : "OneDrive 동기화 중…");
@@ -63,15 +64,6 @@ export default function StorageControls({ flush, replace }: Props) {
   };
   useEffect(() => {
     void finishSignIn().catch((e) => setMessage(e.message));
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker
-        .register(new URL("sw.js", appBaseUrl()).href, { scope: appBaseUrl() })
-        .then(() => navigator.serviceWorker.ready)
-        .then(() => setOffline(true))
-        .catch(() =>
-          setMessage("오프라인 설치 실패. 온라인 상태에서 다시 열어 주세요."),
-        );
-    }
     void navigator.storage?.persist?.();
     let debounce: ReturnType<typeof setTimeout>;
     const attempt = async () => {
@@ -113,14 +105,40 @@ export default function StorageControls({ flush, replace }: Props) {
       </button>
       {open && createPortal(
         <StorageDialog
-          {...{ flush, replace, busy, message, choices, choiceSource, offline }}
+          {...{ flush, replace, busy, message, choices, choiceSource }}
+          offline={pwa.offline}
           sync={(resolution, source) => synchronize.current(resolution, source)}
           close={() => setOpen(false)}
           report={setMessage}
         />, document.body
       )}
+      {(pwa.available || pwa.error) && createPortal(
+        <div className="pwa-update-notice" role="status">
+          <div>
+            {pwa.available && <b>새 버전이 준비되었습니다</b>}
+            {pwa.error && <p role="alert">{pwa.error}</p>}
+          </div>
+          {pwa.available && <button className="primary" disabled={busy || pwa.applying}
+            onClick={() => { if (!running.current) void pwa.applyUpdate(); }}>저장 후 업데이트</button>}
+          {pwa.error && !pwa.available && <button className="icon-button" aria-label="업데이트 안내 닫기" onClick={pwa.dismissError}><X size={18} /></button>}
+        </div>, document.body
+      )}
+      {pwa.applying && createPortal(<PwaUpdateProgress />, document.body)}
     </>
   );
+}
+function PwaUpdateProgress() {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const current = dialog.current;
+    current?.showModal();
+    return () => current?.close();
+  }, []);
+  return <dialog ref={dialog} className="pwa-update-progress" role="dialog" aria-modal="true" aria-busy="true"
+    aria-labelledby="pwa-update-title" onCancel={event => event.preventDefault()}>
+    <h2 id="pwa-update-title">저장 후 업데이트 중</h2>
+    <p>편집 내용을 기기에 저장하고 새 버전을 적용하고 있습니다.</p>
+  </dialog>;
 }
 function StorageDialog({
   flush,

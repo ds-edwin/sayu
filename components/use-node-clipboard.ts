@@ -29,12 +29,21 @@ export function useNodeClipboard(options: Options) {
     }
     function copy(event: ClipboardEvent) {
       if (ignored(event)) return;
-      // Explicitly selected page text keeps its native clipboard behavior.
-      if (window.getSelection()?.isCollapsed === false) return;
+      const selection = window.getSelection();
+      if (selection && !selection.isCollapsed) {
+        const ancestor = selection.rangeCount ? selection.getRangeAt(0).commonAncestorContainer : null;
+        const element = ancestor instanceof Element ? ancestor : ancestor?.parentElement;
+        const editor = element?.closest('[contenteditable="true"],[contenteditable=""],input,textarea,[role="textbox"]');
+        // Chromium keeps a rich-text range after focus moves onto a node. That
+        // blurred selection must not mask node shortcuts. Focused editing and
+        // explicitly selected ordinary page text retain native copy behavior.
+        if (!editor || editor.contains(document.activeElement)) return;
+      }
       const { workspace, selectedIds, generation } = latest.current;
       if (!workspace || !event.clipboardData) return;
       const clipboard = captureNodeClipboard(workspace, selectedIds);
       if (!clipboard) return;
+      selection?.removeAllRanges();
       event.clipboardData.setData("text/plain", JSON.stringify(clipboard));
       event.preventDefault();
       const cutting = event.type === "cut";
