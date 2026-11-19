@@ -289,6 +289,7 @@ function StorageDialog({
           <X />
         </button>
       </header>
+      <div className="storage-dialog-content">
       <p>
         편집 내용은 먼저 이 기기에 저장됩니다. 다른 기기에서 이어 쓰려면
         OneDrive가 동기화하는 기기 폴더를 연결하거나 JSON 파일을 다른 기기에서 열 수 있습니다.
@@ -606,6 +607,7 @@ function StorageDialog({
           ))}
         </details>
       </section>
+      </div>
     </dialog>
   );
 }

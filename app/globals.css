@@ -1808,7 +1808,12 @@ h1 {
 }
 
 .storage-summary {display:block;padding:4px 14px 10px;color:#6f6689;line-height:1.5;overflow-wrap:anywhere;font-size:11px;}
-.storage-dialog {border:0;border-radius:20px;padding:24px;width:min(720px,calc(100% - 24px));max-height:90dvh;overflow:auto;margin:auto;color:#24223a;box-shadow:0 20px 80px #17213f44;}
+.storage-dialog {border:0;border-radius:20px;padding:0;width:min(720px,calc(100% - 24px));max-height:90dvh;overflow:hidden;margin:auto;color:#24223a;box-shadow:0 20px 80px #17213f44;}
+.storage-dialog[open] {display:flex;flex-direction:column;}
+.storage-dialog > header {flex-shrink:0;padding:24px 24px 12px;}
+.storage-dialog > header .icon-button {flex-shrink:0;}
+.storage-dialog-content {flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;padding:0 24px 24px;}
+.storage-dialog-content > p:first-child {margin-top:0;}
 .storage-dialog::backdrop {background:#17213f88}.storage-dialog header {display:flex;align-items:center;justify-content:space-between;gap:12px}.storage-dialog h2 {margin:0}.storage-dialog section {padding:14px 0;border-top:1px solid #e5e3ee}.storage-dialog p,.storage-dialog small,.storage-dialog li {line-height:1.7}.storage-dialog small {color:#6d6681}.storage-dialog code {overflow-wrap:anywhere}.storage-dialog label {display:block;margin:10px 0}.storage-dialog input:not([type=checkbox]) {display:block;width:100%;padding:10px;border:1px solid #d4cede;border-radius:8px;margin-top:4px}.storage-dialog button {min-height:40px;}.storage-actions {display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.storage-dialog button {padding:8px 12px;border-radius:8px;border:1px solid #ddd6ef}.storage-dialog button:disabled {opacity:.5}.storage-message,.storage-preview,.storage-conflicts {background:#f0eefb;border-radius:10px;padding:12px;overflow-wrap:anywhere}.storage-dialog .storage-check {display:flex;align-items:center;gap:8px}.storage-dialog details {padding:10px 0}.storage-dialog summary {cursor:pointer}
 
 .sidebar {overflow:hidden;}
