@@ -46,7 +46,7 @@ import Editor from "./editor";
 import StorageControls from "./storage-controls";
 import KindIcon from "./kind-icon";
 import MapTree from "./map-tree";
-import { removeNodes, copyNodes, removeMap as removeWorkspaceMap, moveMapToFolder, moveInboxNode } from "@/lib/graph-operations";
+import { removeNodes, copyNodes, copyMap, removeMap as removeWorkspaceMap, moveMapToFolder, moveInboxNode } from "@/lib/graph-operations";
 import { archiveCurrentWorkspace } from "@/lib/local-store";
 import { relationAppearance } from "@/lib/graph-appearance";
 import { useWorkspaceDrag } from "./use-workspace-drag";
@@ -273,6 +273,18 @@ export default function Workspace() {
     await archiveCurrentWorkspace();
     update(d => removeWorkspaceMap(d, id));
     setSelected(null); setSelectedIds([]); setEdgeId(null); setPending(null); setContext(null);
+  }
+  function duplicateMap(id: string) {
+    let copiedId: string | undefined;
+    update(d => {
+      const copied = copyMap(d, id);
+      copiedId = copied.mapId;
+      return copied.document;
+    });
+    if (!copiedId) return;
+    setMapId(copiedId); setView("map"); setKindFilter("전체"); setListMode(false);
+    setSelected(null); setSelectedIds([]); setEdgeId(null); setPending(null); setContext(null);
+    closeMobileSidebar();
   }
   useEffect(() => {
     if (!doc) return;
@@ -610,6 +622,7 @@ export default function Workspace() {
           activeMap={view === "map" ? activeMap : null}
           update={update}
           onDelete={deleteMap}
+          onCopy={duplicateMap}
           startDrag={workspaceDrag.start}
           dropTarget={workspaceDrag.target}
           onCreate={(folderId) => {

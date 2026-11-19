@@ -1,4 +1,4 @@
-import { blankWorkspace, type Workspace } from "./model.ts";
+import { blankWorkspace, documentSchema, type Workspace } from "./model.ts";
 export function removeMap(document: Workspace, id: string, makeId: () => string = () => crypto.randomUUID()): Workspace {
   if (!document.maps.some(m => m.id === id)) return document;
   const affected = new Set(document.nodes.filter(n => n.mapId === id).map(n => n.id));
@@ -9,6 +9,64 @@ export function removeMap(document: Workspace, id: string, makeId: () => string 
     nodes: document.nodes.map(n => affected.has(n.id) ? { ...n, mapId: null } : n),
     edges: document.edges.filter(e => !affected.has(e.source) && !affected.has(e.target)),
   };
+}
+export function copyMap(
+  document: Workspace,
+  id: string,
+  makeId: () => string = () => crypto.randomUUID(),
+  now = new Date().toISOString(),
+): { document: Workspace; mapId: string } {
+  const source = document.maps.find(map => map.id === id);
+  if (!source) throw Error("복사할 맵을 찾을 수 없습니다.");
+  const originals = document.nodes.filter(node => node.mapId === id);
+  const chosen = new Set(originals.map(node => node.id));
+  const connections = document.edges.filter(edge => chosen.has(edge.source) && chosen.has(edge.target));
+  if (document.maps.length + 1 > 100 || document.nodes.length + originals.length > 2000 ||
+      document.edges.length + connections.length > 5000)
+    throw Error("맵 복사 한도(맵 100개·노드 2,000개·연결 5,000개)를 초과합니다.");
+
+  const names = new Set(document.maps.map(map => map.name));
+  const base = source.name.replace(/ \(복사(?: \d+)?\)$/u, "") || source.name;
+  let name = "";
+  for (let number = 1; ; number++) {
+    const suffix = number === 1 ? " (복사)" : ` (복사 ${number})`;
+    let stem = "";
+    for (const character of base) {
+      if (stem.length + character.length > 100 - suffix.length) break;
+      stem += character;
+    }
+    name = stem.trimEnd() + suffix;
+    if (!names.has(name)) break;
+  }
+  const usedIds = new Set([
+    ...document.folders.map(folder => folder.id), ...document.maps.map(map => map.id),
+    ...document.nodes.map(node => node.id), ...document.edges.map(edge => edge.id),
+  ]);
+  function freshId() {
+    const next = makeId();
+    if (typeof next !== "string" || !next.length || next.length > 100 || usedIds.has(next))
+      throw Error("맵 복사에 사용할 새 ID를 만들지 못했습니다. 다시 시도해 주세요.");
+    usedIds.add(next);
+    return next;
+  }
+  const mapId = freshId();
+  const remap = new Map(originals.map(node => [node.id, freshId()]));
+  const nodes = originals.map(node => ({
+    ...structuredClone(node), id: remap.get(node.id)!, mapId,
+    createdAt: now, updatedAt: now,
+  }));
+  const edges = connections.map(edge => ({
+    ...edge, id: freshId(), source: remap.get(edge.source)!, target: remap.get(edge.target)!,
+  }));
+  const candidate: Workspace = {
+    ...document,
+    maps: [...document.maps, { ...source, id: mapId, name }],
+    nodes: [...document.nodes, ...nodes],
+    edges: [...document.edges, ...edges],
+  };
+  if (!documentSchema.safeParse(candidate).success)
+    throw Error("맵을 복사하지 못했습니다. 작업실의 내용이 올바른지 확인해 주세요.");
+  return { document: candidate, mapId };
 }
 export function moveMapToFolder(document: Workspace, id: string, folderId: string | null): Workspace {
   if (folderId && !document.folders.some(f => f.id === folderId)) return document;

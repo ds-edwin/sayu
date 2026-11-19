@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Folder,
@@ -13,6 +13,7 @@ import {
   ChevronRight,
   X,
   GripVertical,
+  Copy,
 } from "lucide-react";
 import type { Workspace } from "@/lib/model";
 import { moveMapToFolder } from "@/lib/graph-operations";
@@ -24,6 +25,7 @@ export default function MapTree({
   onCreate,
   update,
   onDelete,
+  onCopy,
   startDrag,
   dropTarget,
 }: {
@@ -33,6 +35,7 @@ export default function MapTree({
   onCreate: (folderId: string | null) => void;
   update: (fn: (d: Workspace) => Workspace) => void;
   onDelete: (id: string) => Promise<void>;
+  onCopy: (id: string) => void;
   startDrag: (event: React.PointerEvent<HTMLElement>, item: DragItem) => void;
   dropTarget: DropTarget | null;
 }) {
@@ -41,6 +44,50 @@ export default function MapTree({
   const [deleting, setDeleting] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [error, setError] = useState("");
+  const [context, setContext] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [newName, setNewName] = useState("");
+  const menu = useRef<HTMLDivElement>(null);
+  const managementName = useRef<HTMLInputElement>(null);
+  const trigger = useRef<HTMLElement | null>(null);
+  function closeMenu(restoreFocus = false) {
+    setContext(null);
+    if (restoreFocus) trigger.current?.focus();
+  }
+  function openMenu(id: string, x: number, y: number, row: HTMLElement) {
+    trigger.current = row.querySelector<HTMLElement>(".nav-item");
+    setError("");
+    setContext({ id, x: Math.max(8, Math.min(x, window.innerWidth - 228)), y: Math.max(8, Math.min(y, window.innerHeight - 218)) });
+  }
+  function manage(id: string, confirmDelete = false) {
+    closeMenu(); setError(""); setDeleteConfirm(confirmDelete); setEdit(id);
+  }
+  function duplicate(id: string) {
+    try { onCopy(id); closeMenu(); setEdit(null); }
+    catch (e) { setError(e instanceof Error ? e.message : "맵을 복사하지 못했습니다."); }
+  }
+  useEffect(() => {
+    if (edit && !deleteConfirm) managementName.current?.focus();
+  }, [edit, deleteConfirm]);
+  useEffect(() => {
+    if (!context) return;
+    menu.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    const outside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !menu.current?.contains(event.target)) setContext(null);
+    };
+    const dismiss = () => setContext(null);
+    const scroll = (event: Event) => {
+      if (!(event.target instanceof Node) || !menu.current?.contains(event.target)) dismiss();
+    };
+    document.addEventListener("pointerdown", outside, true);
+    window.addEventListener("resize", dismiss);
+    window.addEventListener("scroll", scroll, true);
+    return () => {
+      document.removeEventListener("pointerdown", outside, true);
+      window.removeEventListener("resize", dismiss);
+      window.removeEventListener("scroll", scroll, true);
+    };
+  }, [context]);
   function folder(parentId: string | null) {
     const name = window.prompt("새 폴더 이름");
     if (!name?.trim()) return;
@@ -171,15 +218,27 @@ export default function MapTree({
           .map((m) => (
             <div
               key={m.id}
-              className={"map-tree-row " + (activeMap === m.id ? "active " : "") + (dropTarget?.type === "map" && dropTarget.id === m.id ? "node-drop-target" : "")}
+              className={"map-tree-row " + (activeMap === m.id ? "active " : "") + (context?.id === m.id ? "context-active " : "") + (dropTarget?.type === "map" && dropTarget.id === m.id ? "node-drop-target" : "")}
               data-drop-map={m.id}
               data-drop-label={m.name}
+              onContextMenu={e => {
+                e.preventDefault(); e.stopPropagation();
+                const rect = e.currentTarget.getBoundingClientRect();
+                openMenu(m.id, e.clientX || rect.left + 24, e.clientY || rect.bottom, e.currentTarget);
+              }}
+              onKeyDown={e => {
+                if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+                  e.preventDefault(); e.stopPropagation();
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  openMenu(m.id, rect.left + 24, rect.bottom, e.currentTarget);
+                }
+              }}
             >
               <button className="drag-grip" aria-label={m.name + " 드래그 이동"} title="끌어서 폴더로 이동"
                 onPointerDown={e => startDrag(e, { type: "map", id: m.id, label: m.name })}>
                 <GripVertical size={13} />
               </button>
-              <button className="nav-item" onClick={() => onSelect(m.id)}
+              <button className="nav-item" onClick={() => onSelect(m.id)} title="우클릭으로 이름 변경 · 복사 · 삭제"
                 onPointerDown={e => startDrag(e, { type: "map", id: m.id, label: m.name })}>
                 <Network size={16} />
                 <span className="truncate">{m.name}</span>
@@ -190,7 +249,7 @@ export default function MapTree({
               <button
                 className="map-options icon-button"
                 aria-label={m.name + " 관리"}
-                onClick={() => { setError(""); setDeleteConfirm(false); setEdit(m.id); }}
+                onClick={() => manage(m.id)}
               >
                 <MoreHorizontal size={16} />
               </button>
@@ -200,6 +259,8 @@ export default function MapTree({
     );
   }
   const map = doc.maps.find((m) => m.id === edit);
+  const contextMap = doc.maps.find(m => m.id === context?.id);
+  const renameMap = doc.maps.find(m => m.id === renaming);
   function path(id: string): string {
     const f = doc.folders.find((f) => f.id === id);
     return f ? (f.parentId ? path(f.parentId) + " / " : "") + f.name : "";
@@ -238,6 +299,61 @@ export default function MapTree({
         </div>
         {branch(null)}
       </nav>
+      {context && contextMap && createPortal(
+        <div ref={menu} className="map-context-menu" role="menu" aria-label={contextMap.name + " 메뉴"}
+          style={{ left: context.x, top: context.y, maxHeight: `calc(100vh - ${context.y + 8}px)` }}
+          onContextMenu={e => e.preventDefault()}
+          onKeyDown={e => {
+            e.stopPropagation();
+            if (e.key === "Escape") { e.preventDefault(); closeMenu(true); }
+            else if (e.key === "Tab") closeMenu(true);
+            else if (["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) {
+              e.preventDefault();
+              const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+              const current = items.indexOf(document.activeElement as HTMLElement);
+              const next = e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 :
+                (current + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+              items[next]?.focus();
+            }
+          }}>
+          <small className="truncate">{contextMap.name}</small>
+          <button role="menuitem" onClick={() => { setNewName(contextMap.name); setRenaming(contextMap.id); closeMenu(); }}><Pencil size={16} /> 이름 변경</button>
+          <button role="menuitem" onClick={() => duplicate(contextMap.id)}><Copy size={16} /> 복사</button>
+          <button role="menuitem" className="danger" onClick={() => manage(contextMap.id, true)}><Trash2 size={16} /> 삭제</button>
+          {error && <p role="alert">{error}</p>}
+        </div>, document.body
+      )}
+      {renameMap && createPortal(
+        <div className="modal-backdrop" onClick={() => { setRenaming(null); trigger.current?.focus(); }}>
+          <form className="modal map-rename-modal" role="dialog" aria-modal="true" aria-label="맵 이름 변경"
+            onClick={e => e.stopPropagation()}
+            onKeyDown={e => {
+              if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setRenaming(null); trigger.current?.focus(); }
+              if (e.key === "Tab") {
+                const controls = Array.from(e.currentTarget.querySelectorAll<HTMLElement>("button:not(:disabled), input"));
+                const first = controls[0], last = controls[controls.length - 1];
+                if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+                else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+              }
+            }}
+            onSubmit={e => {
+              e.preventDefault();
+              const name = newName.trim();
+              if (!name) return;
+              update(d => ({ ...d, maps: d.maps.map(m => m.id === renameMap.id ? { ...m, name } : m) }));
+              setRenaming(null); trigger.current?.focus();
+            }}>
+            <h2>맵 이름 변경</h2>
+            <label className="field-label">맵 이름
+              <input autoFocus value={newName} maxLength={100} onFocus={e => e.currentTarget.select()} onChange={e => setNewName(e.target.value)} />
+            </label>
+            <div className="map-management-actions">
+              <button type="button" className="secondary" onClick={() => { setRenaming(null); trigger.current?.focus(); }}>취소</button>
+              <button type="submit" className="primary" disabled={!newName.trim()}>저장</button>
+            </div>
+          </form>
+        </div>, document.body
+      )}
       {map && createPortal(
         <div className="modal-backdrop" onClick={() => { if (!deleting) setEdit(null); }}>
           <div
@@ -273,9 +389,10 @@ export default function MapTree({
             <label className="field-label">
               맵 이름
               <input
+                ref={managementName}
                 autoFocus
                 defaultValue={map.name}
-                disabled={deleting}
+                disabled={deleting || deleteConfirm}
                 maxLength={100}
                 onBlur={(e) => {
                   if (e.target.value.trim())
@@ -294,7 +411,7 @@ export default function MapTree({
               폴더로 이동
               <select
                 value={map.folderId ?? ""}
-                disabled={deleting}
+                disabled={deleting || deleteConfirm}
                 onChange={(e) => moveMap(map.id, e.target.value || null)}
               >
                 <option value="">내 맵 (최상위)</option>
@@ -320,6 +437,7 @@ export default function MapTree({
               </div>
             </div>}
             <div className="map-management-actions">
+              <button className="secondary" disabled={deleting || deleteConfirm} onClick={() => duplicate(map.id)}><Copy size={16} /> 맵 복사</button>
               <button className="secondary danger" disabled={deleting || deleteConfirm} onClick={() => setDeleteConfirm(true)}><Trash2 size={16} /> 맵 삭제</button>
               <button className="primary" disabled={deleting} onClick={() => setEdit(null)}>완료</button>
             </div>

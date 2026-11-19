@@ -24,7 +24,7 @@ export function useNodeClipboard(options: Options) {
       const target = event.target instanceof HTMLElement ? event.target : null;
       return event.defaultPrevented || latest.current.blocked ||
         target?.isContentEditable ||
-        !!target?.closest('input,textarea,select,[role="textbox"],dialog,[role="dialog"]') ||
+        !!target?.closest('input,textarea,select,[role="textbox"],dialog,[role="dialog"],[role="menu"]') ||
         !!document.querySelector('dialog[open],[role="dialog"],[role="alertdialog"]');
     }
     function copy(event: ClipboardEvent) {
