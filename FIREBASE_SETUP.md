@@ -12,9 +12,11 @@
 
 이메일의 기본 Firebase action 링크에 `apiKey=`가 비어 들어오면 기본 화면은 `The selected page mode is invalid`를 표시할 수 있습니다. 사유는 별도 정적 화면 `https://ds-edwin.github.io/sayu/email-action.html`에서 앱에 등록된 Firebase 구성을 사용해 재설정 코드를 검증합니다. URL의 API 키나 외부 `continueUrl`을 사용하지 않습니다.
 
-이 화면을 먼저 배포한 뒤 Firebase Authentication 이메일 템플릿의 작업 URL(`notification.sendEmail.callbackUri`)을 위 주소로 설정합니다. 이 설정은 모든 이메일 작업 템플릿에 적용됩니다. 화면은 비밀번호 재설정, 이메일 확인, 이메일 변경 확인·복구를 지원하며, 계정 변경은 사용자가 버튼을 누른 경우에만 진행합니다. 작업실을 열거나 맵 데이터를 수정하지 않습니다.
+현재 프로젝트는 `notification.sendEmail.callbackUri` 변경을 `EMAIL_TEMPLATE_UPDATE_NOT_ALLOWED`로 거부합니다. 설정을 강제로 우회하거나 요금제를 변경하지 않았고, 메일은 기존 Firebase 기본 주소를 사용합니다. 지원을 통해 작업 URL을 바꾸려면 먼저 위 화면이 공개됐는지 확인하고 요청합니다. 작업 URL 변경은 모든 이메일 템플릿에 적용됩니다. 별도 화면은 비밀번호 재설정, 이메일 확인, 이메일 변경 확인·복구를 지원하며, 계정 변경은 사용자가 버튼을 누른 경우에만 진행합니다. 작업실을 열거나 맵 데이터를 수정하지 않습니다.
 
-기존 메일의 주소는 바뀌지 않으므로 변경 후 재설정 메일을 다시 요청합니다. 재설정 코드는 로그·저장소·스크린샷에 남기지 않습니다. 실제 사용자 비밀번호는 자동 검증에서 변경하지 않습니다. [Firebase 이메일 작업 처리 안내](https://firebase.google.com/docs/auth/custom-email-handler/)
+기본 Hosting 사이트에는 릴리스가 없어 `/__/firebase/init.json`이 404였습니다. 기존 기본 사이트를 현재 웹앱에 연결하고 계정 안내 HTML 하나만 배포해 초기화 파일이 올바른 프로젝트·API 키를 반환하는 것을 확인했습니다. 이 작업 직전 `billingEnabled: false`를 확인했고 결제를 연결하지 않았습니다. 앱 본체는 계속 GitHub Pages에서 실행합니다. 설정 파일은 `firebase.auth-hosting.json`, 정적 안내 파일은 `firebase-auth-hosting/index.html`입니다. 유지보수 시 `firebase deploy --only hosting --config firebase.auth-hosting.json --project sayu-thought-map-edwin`으로 인증 설정을 갱신할 수 있습니다. `/__/auth/action`은 Firebase 예약 주소이므로 직접 덮어쓰지 않습니다.
+
+기존 메일의 빈 API 키는 바뀌지 않으므로 재설정 메일을 새로 요청합니다. 기본 Hosting 초기화 후 사용자가 **새 메일에서는 비밀번호 입력 화면이 정상으로 열린다**고 확인했습니다. 메일은 계속 Firebase 기본 화면을 사용하며, 별도 링크 붙여넣기 절차는 추가하지 않았습니다. 재설정 코드는 로그·저장소·스크린샷에 남기지 않으며 실제 사용자 비밀번호는 자동 검사에서 변경하지 않습니다. [Firebase 이메일 작업 처리 안내](https://firebase.google.com/docs/auth/custom-email-handler/)
 
 ## 기존 자료와 계정
 
@@ -50,7 +52,7 @@ Firebase CLI에 프로젝트 관리자 계정으로 로그인하고 다음 명�
 firebase deploy --only firestore:rules,firestore:indexes --project YOUR_PROJECT_ID
 ```
 
-`firebase.json`은 Firestore 규칙·인덱스와 로컬 에뮬레이터만 설정합니다. GitHub Pages 배포 설정을 바꾸거나 Firebase Hosting·유료 서버를 배포하지 않습니다.
+`firebase.json`은 Firestore 규칙·인덱스와 로컬 에뮬레이터만 설정합니다. 기본 인증 사이트 초기화는 별도 `firebase.auth-hosting.json`을 사용합니다. 앱 본체의 GitHub Pages 배포와 분리되어 있으며 유료 서버를 배포하지 않습니다.
 
 ```sh
 npm ci

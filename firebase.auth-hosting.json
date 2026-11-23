@@ -1,0 +1,8 @@
+{
+  "hosting": {
+    "site": "sayu-thought-map-edwin",
+    "public": "firebase-auth-hosting",
+    "ignore": ["**/.*", "**/node_modules/**"],
+    "headers": [{ "source": "**", "headers": [{ "key": "Cache-Control", "value": "no-store" }] }]
+  }
+}
