@@ -44,6 +44,8 @@ import {
 } from "lucide-react";
 import Editor from "./editor";
 import StorageControls from "./storage-controls";
+import FirebaseAccountControls from "./firebase-account";
+import { useFirebaseSession } from "./firebase-session";
 import KindIcon from "./kind-icon";
 import MapTree from "./map-tree";
 import { removeNodes, copyNodes, copyMap, removeMap as removeWorkspaceMap, moveMapToFolder, moveInboxNode } from "@/lib/graph-operations";
@@ -139,7 +141,8 @@ function textBody(body: string) {
 function uid() {
   return crypto.randomUUID();
 }
-export default function Workspace() {
+export default function Workspace({ scope }: { scope?: string }) {
+  const { registerWorkspace, openAccount } = useFirebaseSession();
   const {
     document: doc,
     status,
@@ -156,7 +159,7 @@ export default function Workspace() {
     canRedo,
     beginGroup,
     endGroup,
-  } = useWorkspace();
+  } = useWorkspace(scope);
   const [view, setView] = useState<"map" | "inbox">("map"),
     [mapId, setMapId] = useState("first-map"),
     [selected, setSelected] = useState<string | null>(null),
@@ -270,7 +273,7 @@ export default function Workspace() {
   }
   async function deleteMap(id: string) {
     await flush();
-    await archiveCurrentWorkspace();
+    await archiveCurrentWorkspace(scope);
     update(d => removeWorkspaceMap(d, id));
     setSelected(null); setSelectedIds([]); setEdgeId(null); setPending(null); setContext(null);
   }
@@ -507,6 +510,16 @@ export default function Workspace() {
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
+  const exportCurrent = useRef(exportData);
+  exportCurrent.current = exportData;
+  const workspaceReady = doc !== null;
+  useEffect(() => {
+    if (!workspaceReady) return;
+    return registerWorkspace({
+      flush,
+      exportCurrent: () => exportCurrent.current(),
+    });
+  }, [registerWorkspace, flush, workspaceReady]);
   const nodes: CardNode[] = mapNodes
     .filter((n) => kindFilter === "전체" || n.kind === kindFilter)
     .map((n) => ({
@@ -571,9 +584,12 @@ export default function Workspace() {
           <h1>사유</h1>
           <p>{error || "생각 작업실을 불러오고 있습니다…"}</p>
           {error && (
+            <>
             <button className="primary" onClick={load}>
               다시 연결
             </button>
+            <button onClick={openAccount}>계정 확인</button>
+            </>
           )}
         </div>
       </main>
@@ -640,7 +656,8 @@ export default function Workspace() {
           }}
         />
         <div className="sidebar-bottom">
-          <StorageControls flush={flush} replace={replace} />
+          <FirebaseAccountControls flush={flush} ready={!!doc} replace={replace} />
+          <StorageControls scope={scope} flush={flush} replace={replace} />
           <button className="nav-item" onClick={exportData}>
             <Download size={17} /> JSON 내보내기
           </button>

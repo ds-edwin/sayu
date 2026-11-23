@@ -7,6 +7,7 @@ import {
   setSetting,
   parsePortable,
   exportFile,
+  scopedRecoveryKey,
 } from "@/lib/local-store";
 import {
   finishSignIn,
@@ -23,32 +24,43 @@ import { chooseLocalFolder, disconnectLocalFolder, permitLocalFolder, supportsLo
 import { usePwaUpdates } from "./use-pwa-updates";
 type SyncSource = "drive" | "folder";
 type Props = {
+  scope?: string;
   flush: () => Promise<Workspace>;
   replace: (doc: Workspace, expected?: string) => Promise<void>;
 };
-export default function StorageControls({ flush, replace }: Props) {
+export default function StorageControls({ scope, flush, replace }: Props) {
   const [open, setOpen] = useState(false),
     [message, setMessage] = useState(""),
     [busy, setBusy] = useState(false),
     [choices, setChoices] = useState<RemoteChoice[]>([]),
     [choiceSource, setChoiceSource] = useState<SyncSource>("drive");
   const running = useRef(false),
-    actions = useRef({ flush, replace });
-  actions.current = { flush, replace };
+    active = useRef(true),
+    actions = useRef({ scope, flush, replace });
+  actions.current = { scope, flush, replace };
   const pwa = usePwaUpdates(() => actions.current.flush());
   const synchronize = useRef<(resolution?: string, source?: SyncSource) => Promise<void>>(
     async () => {},
   );
   synchronize.current = async (resolution, source = "drive") => {
+    if (actions.current.scope || !active.current) return;
     if (running.current || pwa.applying) return;
+    const currentActions = actions.current;
     running.current = true;
     setBusy(true);
     setMessage(source === "folder" ? "선택한 폴더 확인 중…" : "OneDrive 동기화 중…");
     try {
-      const doc = await actions.current.flush();
-      setMessage(await (source === "folder" ? syncLocalFolder : syncDrive)(doc, actions.current.replace, resolution));
+      const doc = await currentActions.flush();
+      if (actions.current.scope || !active.current) return;
+      const result = await (source === "folder" ? syncLocalFolder : syncDrive)(doc, async (value, expected) => {
+        if (actions.current.scope || !active.current) throw Error("계정이 변경되어 이전 저장소 동기화를 중단했습니다.");
+        await currentActions.replace(value, expected);
+      }, resolution);
+      if (actions.current.scope || !active.current) return;
+      setMessage(result);
       setChoices([]);
     } catch (e) {
+      if (actions.current.scope || !active.current) return;
       setMessage(e instanceof Error ? e.message : "동기화 실패");
       if (e instanceof SyncConflict) {
         await setSetting(source === "folder" ? "folder-auto-sync" : "auto-sync", false);
@@ -59,15 +71,19 @@ export default function StorageControls({ flush, replace }: Props) {
       if (e instanceof FolderPermissionError) await setSetting("folder-auto-sync", false);
     } finally {
       running.current = false;
-      setBusy(false);
+      if (active.current) setBusy(false);
     }
   };
   useEffect(() => {
-    void finishSignIn().catch((e) => setMessage(e.message));
+    active.current = true;
     void navigator.storage?.persist?.();
+    if (scope) return () => { active.current = false; };
+    void finishSignIn().catch((e) => {
+      if (active.current && !actions.current.scope) setMessage(e.message);
+    });
     let debounce: ReturnType<typeof setTimeout>;
     const attempt = async () => {
-      if (document.visibilityState !== "visible") return;
+      if (!active.current || actions.current.scope || document.visibilityState !== "visible") return;
       if ((await getSetting("folder-auto-sync")) && (await getSetting("folder-config"))) {
         await synchronize.current(undefined, "folder");
         return;
@@ -90,6 +106,7 @@ export default function StorageControls({ flush, replace }: Props) {
     window.addEventListener("focus", saved);
     document.addEventListener("visibilitychange", saved);
     return () => {
+      active.current = false;
       clearTimeout(debounce);
       clearInterval(timer);
       window.removeEventListener("sayu-local-saved", saved);
@@ -97,7 +114,7 @@ export default function StorageControls({ flush, replace }: Props) {
       window.removeEventListener("focus", saved);
       document.removeEventListener("visibilitychange", saved);
     };
-  }, []);
+  }, [scope]);
   return (
     <>
       <button className="nav-item" onClick={() => setOpen(true)}>
@@ -105,7 +122,8 @@ export default function StorageControls({ flush, replace }: Props) {
       </button>
       {open && createPortal(
         <StorageDialog
-          {...{ flush, replace, busy, message, choices, choiceSource }}
+          key={scope ?? "guest"}
+          {...{ scope, flush, replace, busy, message, choices, choiceSource }}
           offline={pwa.offline}
           sync={(resolution, source) => synchronize.current(resolution, source)}
           close={() => setOpen(false)}
@@ -141,6 +159,7 @@ function PwaUpdateProgress() {
   </dialog>;
 }
 function StorageDialog({
+  scope,
   flush,
   replace,
   busy,
@@ -190,7 +209,7 @@ function StorageDialog({
     setLocalFolder((await getSetting<FolderConfig>("folder-config")) ?? null);
     setFolderAuto(!!(await getSetting("folder-auto-sync")));
     setFolderLast((await getSetting<string>("folder-last-sync")) ?? "");
-    setRecovery((await getSetting("recovery")) ?? []);
+    setRecovery((await getSetting(scopedRecoveryKey(scope))) ?? []);
   }
   useEffect(() => {
     dialog.current?.showModal();
@@ -293,7 +312,7 @@ function StorageDialog({
       <div className="storage-dialog-content">
       <p>
         <b>기기 자동 저장은 별도로 켜지 않아도 동작합니다.</b> 편집 내용은 먼저 현재 브라우저에 저장됩니다.
-        아래 설정은 다른 기기로 파일을 옮기거나 OneDrive와 동기화할 때 사용합니다.
+        {scope ? " 같은 계정의 기기 간 동기화는 Firebase 계정 메뉴에서 확인할 수 있습니다." : " 아래 설정은 다른 기기로 파일을 옮기거나 OneDrive와 동기화할 때 사용합니다."}
       </p>
       {message && <p className="storage-message" role="status">{message}</p>}
       <section>
@@ -312,6 +331,11 @@ function StorageDialog({
           브라우저 데이터를 지우기 전에는 반드시 내보내세요.
         </small>
       </section>
+      {scope ? <section>
+        <h3>2. 계정 자동 동기화</h3>
+        <p>로그인한 작업실은 Firebase로 동기화합니다. PC와 iPad에서 같은 계정으로 로그인하세요.</p>
+        <p>기존 기기 폴더와 OneDrive 연결은 로그아웃한 작업실에서만 사용할 수 있습니다. 연결 설정과 원본 파일은 그대로 보관됩니다.</p>
+      </section> : <>
       <section>
         <h3>2. 기기 폴더 연결 · {folderSupported ? "Microsoft 앱 등록 불필요" : "이 브라우저에서는 미지원"}</h3>
         {folderSupported ? <>
@@ -476,7 +500,8 @@ function StorageDialog({
           {last ? new Date(last).toLocaleString() : "없음"}
         </small>
       </section>
-        {choices.length > 0 && (
+      </>}
+        {!scope && choices.length > 0 && (
           <section className="storage-conflicts">
             <b>{choiceSource === "folder" ? "기기 폴더" : "OneDrive"} 버전 선택 — 원본 버전은 삭제하지 않습니다</b>
             <button
@@ -519,7 +544,7 @@ function StorageDialog({
           </section>
         )}
       <section>
-        <h3>4. 파일 저장소 · 백업</h3>
+        <h3>{scope ? "3" : "4"}. 파일 저장소 · 백업</h3>
         <p>
           JSON 파일을 OneDrive·iCloud·기기 폴더에 저장하고 다른 기기에서 열 수
           있습니다. 이 방식은 수동 이동이며 자동 동기화가 아닙니다.
@@ -531,7 +556,7 @@ function StorageDialog({
           <button disabled={blocked} onClick={() => input.current?.click()}>
             JSON 파일 열기
           </button>
-          <button
+          {!scope && <button
             disabled={blocked}
             onClick={() =>
               void run(async () => {
@@ -549,7 +574,7 @@ function StorageDialog({
             }
           >
             기존 온라인 저장본 가져오기
-          </button>
+          </button>}
         </div>
         <input
           ref={input}
@@ -590,7 +615,7 @@ function StorageDialog({
                     await replace(file.document);
                     setFile(null);
                     report(
-                      "가져오기 완료. OneDrive 연결 시 다음 동기화에서 변경을 확인하세요.",
+                      scope ? "가져오기 완료. 계정 동기화 상태를 확인하세요." : "가져오기 완료. OneDrive 연결 시 다음 동기화에서 변경을 확인하세요.",
                     );
                   });
               }}
@@ -601,7 +626,7 @@ function StorageDialog({
           </div>
         )}
         <details>
-          <summary>이 기기의 복원 기록 ({recovery.length}/20)</summary>
+          <summary>{scope ? "이 계정의 기기 복원 기록" : "이 기기의 복원 기록"} ({recovery.length}/20)</summary>
           {recovery.map((item, index) => (
             <div key={index}>
               <span>

@@ -1808,6 +1808,32 @@ h1 {
 }
 
 .storage-summary {display:block;padding:4px 14px 10px;color:#6f6689;line-height:1.5;overflow-wrap:anywhere;font-size:11px;}
+.firebase-workspace {height:100%;}
+.firebase-workspace[hidden] {display:none;}
+.firebase-transition {margin:15vh auto;padding:24px;max-width:560px;line-height:1.7;}
+.firebase-account-button span {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.firebase-sync-status {padding:0 12px 7px;color:#6f6689;font-size:11px;line-height:1.5;}
+.firebase-sync-status > button {margin-left:6px;padding:2px 7px;border:1px solid #ded7ed;border-radius:6px;}
+.firebase-sync-status p {overflow-wrap:anywhere;margin:4px 0;}
+.firebase-dialog {border:0;border-radius:20px;padding:0;width:min(620px,calc(100% - 24px));max-height:90dvh;overflow:hidden;margin:auto;color:#24223a;box-shadow:0 20px 80px #17213f44;}
+.firebase-dialog[open] {display:flex;flex-direction:column;}
+.firebase-dialog::backdrop {background:#17213f88;}
+.firebase-dialog > header {display:flex;align-items:center;justify-content:space-between;gap:12px;flex-shrink:0;padding:22px 24px 12px;}
+.firebase-dialog h2 {font-size:20px;margin:0;}
+.firebase-dialog .icon-button {flex-shrink:0;}
+.firebase-dialog-body {overflow:auto;overscroll-behavior:contain;padding:0 24px 24px;min-height:0;line-height:1.7;}
+.firebase-dialog-body p {overflow-wrap:anywhere;}
+.firebase-dialog label {display:block;font-weight:600;margin:16px 0;}
+.firebase-dialog input {display:block;width:100%;padding:11px;border:1px solid #d4cede;border-radius:8px;margin-top:5px;font-size:16px;}
+.firebase-dialog button:not(.icon-button) {padding:9px 12px;border:1px solid #ddd6ef;border-radius:8px;min-height:42px;}
+.firebase-dialog button:disabled {opacity:.5;}
+.firebase-account-links {display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;}
+.firebase-note {font-size:12px;color:#776d8b;}
+.firebase-conflict-options {display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.firebase-conflict-options section {padding:16px;border:1px solid #ded7ed;border-radius:12px;}
+.firebase-conflict-options h3 {margin:0;}
+.firebase-conflict-options button {width:100%;margin-top:8px;}
+@media(max-width:540px) {.firebase-conflict-options {grid-template-columns:1fr;}}
 .storage-dialog {border:0;border-radius:20px;padding:0;width:min(720px,calc(100% - 24px));max-height:90dvh;overflow:hidden;margin:auto;color:#24223a;box-shadow:0 20px 80px #17213f44;}
 .storage-dialog[open] {display:flex;flex-direction:column;}
 .storage-dialog > header {flex-shrink:0;padding:24px 24px 12px;}

@@ -8,3 +8,7 @@ public/pwa-precache.json
 .env*
 browser-results/
 *.tsbuildinfo
+.firebase/
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*

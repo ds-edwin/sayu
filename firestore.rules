@@ -1,0 +1,69 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function owner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+    function uuid(value) {
+      return value is string && value.matches('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');
+    }
+    function digest(value) {
+      return value is string && value.matches('^[0-9a-f]{64}$');
+    }
+    function isoDate(value) {
+      return value is string && value.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$');
+    }
+    function versionPath(uid, id) {
+      return /databases/$(database)/documents/users/$(uid)/workspaces/main/versions/$(id);
+    }
+    function matchingManifest(uid, data, parent) {
+      let manifest = get(versionPath(uid, data.headId)).data;
+      return manifest.id == data.headId && manifest.parentId == parent &&
+        manifest.createdAt == data.updatedAt && manifest.sha256 == data.sha256;
+    }
+    function validHead(uid, data, parent) {
+      return data.keys().hasAll(['version', 'headId', 'updatedAt', 'sha256']) &&
+        data.keys().hasOnly(['version', 'headId', 'updatedAt', 'sha256']) &&
+        data.version is int && data.version == 1 && uuid(data.headId) &&
+        isoDate(data.updatedAt) && digest(data.sha256) &&
+        matchingManifest(uid, data, parent);
+    }
+    function validManifest(data, id) {
+      return data.keys().hasAll(['format', 'version', 'id', 'parentId', 'createdAt', 'chunkCount', 'byteLength', 'sha256']) &&
+        data.keys().hasOnly(['format', 'version', 'id', 'parentId', 'createdAt', 'chunkCount', 'byteLength', 'sha256']) &&
+        data.format == 'sayu-firebase-snapshot' && data.version is int && data.version == 1 &&
+        uuid(id) && data.id == id && (data.parentId == null || uuid(data.parentId)) && data.parentId != id &&
+        isoDate(data.createdAt) && data.chunkCount is int && data.chunkCount >= 1 && data.chunkCount <= 164 &&
+        data.byteLength is int && data.byteLength >= 1 && data.byteLength <= 10485760 && digest(data.sha256);
+    }
+    function chunkKey(index) {
+      return index < 10 ? '000' + string(index) : index < 100 ? '00' + string(index) : '0' + string(index);
+    }
+    function validChunk(data, id) {
+      return data.keys().hasAll(['index', 'text']) && data.keys().hasOnly(['index', 'text']) &&
+        data.index is int && data.index >= 0 && data.index < 164 && id == chunkKey(data.index) &&
+        data.text is string && data.text.size() > 0 && data.text.toUtf8().size() <= 262144;
+    }
+    match /users/{uid}/workspaces/main {
+      allow get: if owner(uid);
+      allow create: if owner(uid) && validHead(uid, request.resource.data, null);
+      allow update: if owner(uid) && request.resource.data.headId != resource.data.headId &&
+        validHead(uid, request.resource.data, resource.data.headId);
+      allow delete: if false;
+      match /versions/{versionId} {
+        allow get, list: if owner(uid);
+        allow create: if owner(uid) && validManifest(request.resource.data, versionId);
+        allow update, delete: if false;
+        match /chunks/{chunkId} {
+          allow get, list: if owner(uid);
+          // Chunks are staged before their immutable completion manifest exists.
+          allow create: if owner(uid) && uuid(versionId) && validChunk(request.resource.data, chunkId);
+          allow update, delete: if false;
+        }
+      }
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,5 +1,13 @@
-import { documentSchema, type Workspace } from "./model.ts";
+import { blankWorkspace, documentSchema, type Workspace } from "./model.ts";
 export type LocalWorkspace = { document: Workspace; revision: number };
+const legacyAccountOwnerKey = "firebase-legacy-workspace-owner";
+function scopedKey(key: string, scope?: string) {
+  if (scope === undefined) return key;
+  if (!scope.trim() || scope.length > 400) throw Error("잘못된 기기 작업실 계정입니다.");
+  return `${key}:${scope}`;
+}
+export function scopedWorkspaceKey(scope?: string) { return scopedKey("workspace", scope); }
+export function scopedRecoveryKey(scope?: string) { return scopedKey("recovery", scope); }
 export class LocalRevisionConflict extends Error {
   constructor() {
     super("다른 창에서 변경했습니다. 현재 작업을 JSON으로 내보낸 후 다시 불러오세요.");
@@ -38,18 +46,69 @@ export async function setSetting(key: string, value: unknown) {
     tx.onerror = () => reject(tx.error);
   });
 }
-export async function archiveCurrentWorkspace() {
+export function readLocal(scope?: string): Promise<LocalWorkspace | undefined> {
+  return getSetting<LocalWorkspace>(scopedWorkspaceKey(scope));
+}
+// Claim and copy the legacy workspace atomically. Its originals are never moved
+// or deleted, and another account must never inherit that first account's data.
+export async function prepareAccountWorkspace(scope: string): Promise<LocalWorkspace> {
+  const key = scopedWorkspaceKey(scope), recoveryKey = scopedRecoveryKey(scope);
+  const db = await database();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("records", "readwrite"), store = tx.objectStore("records");
+    let result: LocalWorkspace, customError: unknown;
+    const existing = store.get(key);
+    existing.onsuccess = () => {
+      const owner = store.get(legacyAccountOwnerKey);
+      owner.onsuccess = () => {
+        if (existing.result) {
+          result = existing.result as LocalWorkspace;
+          if (!owner.result) store.put(scope, legacyAccountOwnerKey);
+          return;
+        }
+        const create = (document: unknown) => {
+          try {
+            result = { document: documentSchema.parse(document), revision: 1 };
+            store.put(result, key);
+            if (!owner.result) store.put(scope, legacyAccountOwnerKey);
+          } catch (error) {
+            customError = error;
+            tx.abort();
+          }
+        };
+        if (owner.result) {
+          create(blankWorkspace());
+          return;
+        }
+        const legacy = store.get("workspace");
+        legacy.onsuccess = () => {
+          create((legacy.result as LocalWorkspace | undefined)?.document ?? blankWorkspace());
+          if (customError) return;
+          const recovery = store.get("recovery");
+          recovery.onsuccess = () => {
+            if (recovery.result !== undefined) store.put(recovery.result, recoveryKey);
+          };
+        };
+      };
+    };
+    tx.oncomplete = () => resolve(result);
+    tx.onabort = () => reject(customError ?? tx.error ?? Error("계정 작업실을 준비하지 못했습니다."));
+    tx.onerror = () => reject(tx.error);
+  });
+}
+export async function archiveCurrentWorkspace(scope?: string) {
+  const key = scopedWorkspaceKey(scope), recoveryKey = scopedRecoveryKey(scope);
   const db = await database();
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction("records", "readwrite"), store = tx.objectStore("records");
-    const request = store.get("workspace");
+    const request = store.get(key);
     request.onsuccess = () => {
       const current = request.result as LocalWorkspace | undefined;
       if (!current) return;
-      const recovery = store.get("recovery");
+      const recovery = store.get(recoveryKey);
       recovery.onsuccess = () => store.put([
         { date: new Date().toISOString(), document: current.document }, ...(recovery.result ?? []),
-      ].slice(0, 20), "recovery");
+      ].slice(0, 20), recoveryKey);
     };
     tx.oncomplete = () => resolve();
     tx.onabort = () => reject(tx.error);
@@ -60,7 +119,9 @@ export async function writeLocal(
   document: Workspace,
   expectedRevision: number,
   archive = false,
+  scope?: string,
 ): Promise<number> {
+  const key = scopedWorkspaceKey(scope), recoveryKey = scopedRecoveryKey(scope);
   const parsed = documentSchema.parse(document),
     db = await database();
   return new Promise((resolve, reject) => {
@@ -68,7 +129,7 @@ export async function writeLocal(
       store = tx.objectStore("records");
     let revision = 0,
       customError: Error | undefined;
-    const r = store.get("workspace");
+    const r = store.get(key);
     r.onsuccess = () => {
       const current = r.result as LocalWorkspace | undefined;
       if ((current?.revision ?? 0) !== expectedRevision) {
@@ -78,7 +139,7 @@ export async function writeLocal(
       }
       revision = expectedRevision + 1;
       if (archive && current) {
-        const q = store.get("recovery");
+        const q = store.get(recoveryKey);
         q.onsuccess = () => {
           const previous = (q.result ?? []) as {
             date: string;
@@ -89,11 +150,11 @@ export async function writeLocal(
               { date: new Date().toISOString(), document: current.document },
               ...previous,
             ].slice(0, 20),
-            "recovery",
+            recoveryKey,
           );
         };
       }
-      store.put({ document: parsed, revision }, "workspace");
+      store.put({ document: parsed, revision }, key);
     };
     tx.oncomplete = () => {
       window.dispatchEvent(new Event("sayu-local-saved"));
