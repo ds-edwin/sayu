@@ -41,6 +41,7 @@ import {
   Copy,
   Undo2,
   Redo2,
+  Tags,
 } from "lucide-react";
 import Editor from "./editor";
 import StorageControls from "./storage-controls";
@@ -104,9 +105,9 @@ function KnowledgeCard({ data, selected }: NodeProps<CardNode>) {
       </div>
       <strong>{n.title.trim() || "제목 없는 생각"}</strong>
       <div className="node-bottom">
-        {n.tags.length
+        <span>{n.tags.length
           ? n.tags.map((t) => "#" + t).join(" ")
-          : "생각을 이어가세요"}
+          : "생각을 이어가세요"}</span>
         <FileText size={13} />
       </div>
       <Handle
@@ -126,6 +127,28 @@ function KnowledgeCard({ data, selected }: NodeProps<CardNode>) {
   );
 }
 const nodeTypes = { knowledge: KnowledgeCard };
+function nodeCardWidth() {
+  return Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--node-card-width")) || 164;
+}
+function DraftInput({ value, commit, ...props }: Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "defaultValue" | "onChange" | "onBlur"> & {
+  value: string; commit: (draft: string) => string;
+}) {
+  const [draft, setDraft] = useState(value);
+  const dirty = useRef(false);
+  useEffect(() => { if (!dirty.current) setDraft(value); }, [value]);
+  return <input {...props} value={draft}
+    onChange={event => { dirty.current = true; setDraft(event.target.value); event.target.setCustomValidity(""); }}
+    onBlur={event => {
+      if (!dirty.current) return;
+      try {
+        const normalized = commit(draft);
+        dirty.current = false; setDraft(normalized); event.target.setCustomValidity("");
+      } catch (problem) {
+        event.target.setCustomValidity(problem instanceof Error ? problem.message : "입력 내용을 확인해 주세요.");
+        event.target.reportValidity();
+      }
+    }} />;
+}
 function textBody(body: string) {
   try {
     const walk = (o: unknown): string => {
@@ -206,6 +229,7 @@ export default function Workspace({ scope }: { scope?: string }) {
   }, [workspaceDrag.drag?.type]);
   const map = doc?.maps.find((m) => m.id === mapId) ?? doc?.maps[0];
   const activeMap = map?.id ?? mapId;
+  const showRelationLabels = map?.showRelationLabels ?? true;
   const item = doc?.nodes.find((n) => n.id === selected);
   const selectedEdge = doc?.edges.find((e) => e.id === edgeId);
   const inbox = doc?.nodes.filter((n) => !n.mapId) ?? [];
@@ -230,7 +254,7 @@ export default function Workspace({ scope }: { scope?: string }) {
           : clipboard.nodes;
         const left = Math.min(...source.map(n => n.position.x));
         const top = Math.min(...source.map(n => n.position.y));
-        const width = Math.max(...source.map(n => n.position.x)) - left + 245;
+        const width = Math.max(...source.map(n => n.position.x)) - left + nodeCardWidth();
         const height = Math.max(...source.map(n => n.position.y)) - top + 140;
         const anchor = center && (cut || source.some(n => n.mapId !== activeMap))
           ? { x: center.x - width / 2 + offset, y: center.y - height / 2 + offset }
@@ -539,7 +563,7 @@ export default function Workspace({ scope }: { scope?: string }) {
       ...e,
       selected: e.id === edgeId,
       ariaLabel: `${doc?.nodes.find(n => n.id === e.source)?.title} → ${doc?.nodes.find(n => n.id === e.target)?.title}: ${e.relation}`,
-      label: `${appearance.symbol} ${e.relation}`,
+      label: showRelationLabels ? `${appearance.symbol} ${e.relation}` : undefined,
       type: appearance.path,
       interactionWidth: 24,
       markerEnd: {
@@ -838,6 +862,12 @@ export default function Workspace({ scope }: { scope?: string }) {
               ))}
             </div>
             <div className="map-view-tools">
+              <button className="icon-button" aria-label={showRelationLabels ? "연결선 이름 숨기기" : "연결선 이름 보기"}
+                title={showRelationLabels ? "연결선 이름 숨기기" : "연결선 이름 보기"}
+                aria-pressed={showRelationLabels} disabled={listMode}
+                onClick={() => update(d => ({ ...d, maps: d.maps.map(m => m.id === activeMap ? { ...m, showRelationLabels: !showRelationLabels } : m) }))}>
+                <Tags size={17} />
+              </button>
               <button className="icon-button" aria-label="맵 중앙 맞추기" title="맵 중앙 맞추기" disabled={listMode || !mapNodes.length}
                 onClick={() => void flow.current?.fitView({ padding: .25, maxZoom: 1 })}><Focus size={17} /></button>
               <button className="icon-button" aria-label={miniMap ? "미니맵 숨기기" : "미니맵 보기"} title={miniMap ? "미니맵 숨기기" : "미니맵 보기"}
@@ -1096,7 +1126,7 @@ export default function Workspace({ scope }: { scope?: string }) {
                   onClick={(_, position) => void flow.current?.setCenter(position.x, position.y, { zoom: flow.current.getZoom() })}
                   onNodeClick={(event, node) => {
                     event.stopPropagation();
-                    void flow.current?.setCenter(node.position.x + (node.measured?.width ?? 245) / 2, node.position.y + (node.measured?.height ?? 140) / 2, { zoom: flow.current.getZoom() });
+                    void flow.current?.setCenter(node.position.x + (node.measured?.width ?? nodeCardWidth()) / 2, node.position.y + (node.measured?.height ?? 140) / 2, { zoom: flow.current.getZoom() });
                   }}
                   pannable
                   zoomable
@@ -1183,40 +1213,36 @@ export default function Workspace({ scope }: { scope?: string }) {
                 />
                 <label className="field-label">
                   태그{" "}
-                  <input
+                  <DraftInput
                     aria-label="태그"
                     placeholder="예: 경제, 기술, 역사 (쉼표 구분)"
                     key={"tags" + item.id}
-                    defaultValue={item.tags.join(", ")}
-                    onBlur={(e) =>
-                      patch(item.id, {
-                        tags: e.target.value
-                          .split(",")
-                          .map((t) => t.trim())
-                          .filter(Boolean)
-                          .slice(0, 20),
-                      })
-                    }
+                    value={item.tags.join(", ")}
+                    commit={draft => {
+                      const tags = draft.split(",").map(t => t.trim()).filter(Boolean).slice(0, 20);
+                      if (tags.some(tag => tag.length > 40)) throw Error("각 태그는 40자 이하로 입력하세요.");
+                      if (JSON.stringify(tags) !== JSON.stringify(item.tags)) patch(item.id, { tags });
+                      return tags.join(", ");
+                    }}
                   />
                 </label>
                 <label className="field-label">
                   출처{" "}
-                  <input
+                  <DraftInput
                     aria-label="출처 URL"
                     placeholder="https://…"
                     key={"source" + item.id}
-                    defaultValue={item.source}
-                    onBlur={(e) => {
-                      const v = e.target.value.trim();
-                      if (v && !/^https?:\/\/[^\s]+$/.test(v)) {
-                        e.target.setCustomValidity(
-                          "http 또는 https 주소를 입력하세요.",
-                        );
-                        e.target.reportValidity();
-                      } else {
-                        e.target.setCustomValidity("");
-                        patch(item.id, { source: v });
+                    value={item.source}
+                    commit={draft => {
+                      const source = draft.trim();
+                      if (source) {
+                        try {
+                          const url = new URL(source);
+                          if (!/^https?:$/.test(url.protocol) || !/^https?:\/\/[^\s]+$/.test(source)) throw Error();
+                        } catch { throw Error("http 또는 https 주소를 입력하세요."); }
                       }
+                      if (source !== item.source) patch(item.id, { source });
+                      return source;
                     }}
                   />
                 </label>

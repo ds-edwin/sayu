@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { FirebaseServices } from "../lib/firebase-client.ts";
 import { documentSchema, type Workspace } from "../lib/model.ts";
 import { exportFile, getSetting, setSetting } from "../lib/local-store.ts";
+import { mergeFirebaseWorkspaces, stampWorkspace } from "../lib/firebase-merge.ts";
 import {
   createFirestoreWorkspace, decideFirebaseSync, firebaseVersionId, firebaseWorkspaceSignature,
   FirebaseHeadConflict, FirebaseSessionChanged, type FirebaseBaseline, type FirebaseVersion,
@@ -18,7 +19,7 @@ export type FirebaseSyncState = {
 type Choice = "local" | "remote";
 type WorkspaceActions = {
   flush: () => Promise<Workspace>;
-  replace: (document: Workspace, expected?: string) => Promise<void>;
+  replace: (document: Workspace, expected?: string, options?: { source?: "local" | "remote" }) => Promise<void>;
 };
 type SyncProps = WorkspaceActions & {
   ready: boolean;
@@ -60,6 +61,8 @@ export function createFirebaseSyncController(options: WorkspaceActions & {
   let running: Promise<void> | null = null;
   let cachedRemote: FirebaseVersion | null = null;
   let observedHead: string | null | undefined;
+  let retryPending = false;
+  const migrationActor = `migration:${crypto.randomUUID()}`;
   const guard = () => { if (!options.isCurrent()) throw new FirebaseSessionChanged(); };
   const publish = (next: FirebaseSyncState) => {
     guard();
@@ -89,34 +92,66 @@ export function createFirebaseSyncController(options: WorkspaceActions & {
   }
   async function readPair() {
     guard();
-    const local = await options.flush();
+    await options.flush();
     guard();
     const remote = await readRemote();
     guard();
-    return { local, remote };
+    // Remote reads may take time. Use the latest persisted draft when deciding
+    // what to merge, including edits made while that request was in flight.
+    const latest = await options.flush();
+    guard();
+    return { local: latest, remote };
   }
   function showConflict(local: Workspace, remote: FirebaseVersion, error: string | null = null) {
     publish({ status: "conflict", error, conflict: { local, remote } });
   }
   async function synchronize() {
-    const { local, remote } = await readPair();
-    const base = parseBaseline(await options.readBaseline());
-    guard();
-    const decision = decideFirebaseSync(local, base, remote);
-    if (decision === "conflict") return showConflict(local, remote!);
-    if (decision === "push") {
-      const committed = await options.engine.commit(local, remote?.id ?? null);
+    retryPending = false;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const { local, remote } = await readPair();
+      const base = parseBaseline(await options.readBaseline());
       guard();
-      await remember(committed);
-    } else {
-      if (decision === "pull") {
+      const decision = decideFirebaseSync(local, base, remote);
+      // Only the first connection of unrelated existing workspaces needs a
+      // choice. Devices with a common baseline always reconcile automatically.
+      if (decision === "conflict" && !base) return showConflict(local, remote!);
+      let candidate = decision === "pull" ? remote!.document : decision === "conflict"
+        ? mergeFirebaseWorkspaces(base!.document, local, remote!.document, { remoteTime: Date.parse(remote!.createdAt) })
+        : local;
+      if (firebaseWorkspaceSignature(candidate) !== firebaseWorkspaceSignature(local)) {
         guard();
-        // replace archives the previous workspace and refuses an intervening edit.
-        await options.replace(remote!.document, JSON.stringify(local));
+        try {
+          // Incoming data keeps its existing edit stamps and archives the
+          // previous local copy. A racing local edit is merged by replace.
+          await options.replace(candidate, JSON.stringify(local), { source: "remote" });
+        } catch (problem) {
+          guard();
+          const latest = await options.flush();
+          guard();
+          if (firebaseWorkspaceSignature(latest) !== firebaseWorkspaceSignature(local)) continue;
+          throw problem;
+        }
+        candidate = await options.flush();
         guard();
       }
-      await remember(remote!);
+      try {
+        const version = remote && firebaseWorkspaceSignature(candidate) === firebaseWorkspaceSignature(remote.document)
+          ? remote : await options.engine.commit(candidate, remote?.id ?? null);
+        guard();
+        await remember(version);
+        const latest = await options.flush();
+        guard();
+        if (firebaseWorkspaceSignature(latest) === firebaseWorkspaceSignature(version.document)) return;
+        publish({ status: "syncing", error: null, conflict: null });
+      } catch (problem) {
+        if (!(problem instanceof FirebaseHeadConflict)) throw problem;
+        guard();
+        // Another device won the head CAS. Read its version and merge again;
+        // every staged snapshot remains immutable and recoverable.
+      }
     }
+    retryPending = true;
+    publish({ status: "syncing", error: null, conflict: null });
   }
   function run(action: () => Promise<void>): Promise<void> {
     if (running) return running.then(() => run(action));
@@ -145,6 +180,7 @@ export function createFirebaseSyncController(options: WorkspaceActions & {
     get state() { return state; },
     get busy() { return running !== null; },
     get observedHead() { return observedHead; },
+    get retryPending() { return retryPending; },
     sync: () => run(synchronize),
     resolve(choice: Choice) {
       const chosen = state.conflict;
@@ -158,12 +194,18 @@ export function createFirebaseSyncController(options: WorkspaceActions & {
           return;
         }
         if (choice === "local") {
-          const committed = await options.engine.commit(local, remote.id);
+          // Explicit first-login replacement is itself a new edit; tombstone
+          // omitted cloud entities so a previously connected device cannot
+          // revive them using an older snapshot.
+          const chosenLocal = stampWorkspace(remote.document, local, migrationActor);
+          await options.replace(chosenLocal, JSON.stringify(local), { source: "remote" });
+          guard();
+          const committed = await options.engine.commit(await options.flush(), remote.id);
           guard();
           await remember(committed);
         } else {
           guard();
-          await options.replace(remote.document, JSON.stringify(local));
+          await options.replace(remote.document, JSON.stringify(local), { source: "remote" });
           guard();
           await remember(remote);
         }
@@ -205,7 +247,7 @@ export function useFirebaseSync(props: SyncProps) {
       readBaseline: () => getSetting(key), writeBaseline: value => setSetting(key, value),
       onChange: next => { if (isCurrent()) setState(next); },
     });
-    const schedule = (delay = 4000) => {
+    const schedule = (delay = 700) => {
       if (!isCurrent()) return;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
@@ -220,7 +262,7 @@ export function useFirebaseSync(props: SyncProps) {
       unsubscribe?.();
       watchFailed = false;
       unsubscribe = engine.watchHead(head => {
-        if ((head?.headId ?? null) !== controller.observedHead) schedule();
+        if ((head?.headId ?? null) !== controller.observedHead) schedule(0);
       }, problem => {
         watchFailed = true;
         controller.report(problem);
@@ -233,7 +275,7 @@ export function useFirebaseSync(props: SyncProps) {
       watch();
       if (choice) await controller.resolve(choice);
       else await controller.sync();
-      if (isCurrent() && pending) { pending = false; schedule(); }
+      if (isCurrent() && (pending || controller.retryPending)) { pending = false; schedule(); }
     }
     const session: Session = { isCurrent, controller, run };
     sessionRef.current = session;

@@ -7,6 +7,7 @@ import {
 } from "firebase/auth";
 import { connectFirestoreEmulator, getFirestore, type Firestore } from "firebase/firestore";
 import configuredValues from "../portable/firebase-config.json" with { type: "json" };
+import { appBaseUrl } from "./app-url.ts";
 
 export type FirebaseServices = { app: FirebaseApp; auth: Auth; db: Firestore };
 export type FirebaseConfigStatus = {
@@ -128,7 +129,11 @@ export async function createAccount(email: string, password: string) {
 }
 
 export async function resetPassword(email: string) {
-  try { await sendPasswordResetEmail((await getFirebaseServices()).auth, email.trim()); }
+  try {
+    const { auth } = await getFirebaseServices();
+    auth.languageCode = "ko";
+    await sendPasswordResetEmail(auth, email.trim(), { url: appBaseUrl(), handleCodeInApp: false });
+  }
   catch (problem) { throw authError(problem); }
 }
 

@@ -2,6 +2,37 @@ import { z } from "zod";
 export const kinds = ["메모", "질문", "주장", "근거", "개념", "사례"] as const;
 export const relations = ["관련", "지지", "반박", "원인", "구체화"] as const;
 const id = z.string().min(1).max(100);
+const syncInteger = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+export const syncStampSchema = z.object({
+  time: syncInteger,
+  counter: syncInteger,
+  actor: z.string().min(1).max(128),
+  deleted: z.boolean(),
+});
+// z.record intentionally strips __proto__; IDs already allow that spelling.
+// Validate entries and rebuild with data properties so no history is lost and
+// dictionary order cannot make equivalent snapshots acquire different hashes.
+const syncRecordsSchema = z.preprocess(
+  value => value && typeof value === "object" && !Array.isArray(value) ? Object.entries(value) : null,
+  z.array(z.tuple([id, syncStampSchema])).transform(entries => Object.fromEntries(
+    entries.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0),
+  ) as Record<string, z.infer<typeof syncStampSchema>>),
+);
+export const MAX_SYNC_META_RECORDS = 50_000;
+export const syncMetadataSchema = z.object({
+  version: z.literal(1),
+  clock: z.object({ time: syncInteger, counter: syncInteger }),
+  entities: z.object({
+    folders: syncRecordsSchema, maps: syncRecordsSchema,
+    nodes: syncRecordsSchema, edges: syncRecordsSchema,
+  }),
+}).superRefine((value, ctx) => {
+  if (Object.values(value.entities).reduce((sum, records) => sum + Object.keys(records).length, 0) > MAX_SYNC_META_RECORDS)
+    ctx.addIssue({ code: "custom", message: "동기화 변경 기록 한도를 초과했습니다. 기존 데이터는 유지됩니다." });
+});
+export type SyncStamp = z.infer<typeof syncStampSchema>;
+export type SyncClock = { time: number; counter: number };
+export type SyncMetadata = z.infer<typeof syncMetadataSchema>;
 const nodeSchema = z.object({
   id,
   // Clearing a title is a valid editing draft; autosave must preserve it before blur.
@@ -41,6 +72,7 @@ export const documentSchema = z
           name: z.string().trim().min(1).max(100),
           description: z.string().max(500),
           folderId: id.nullable().default(null),
+          showRelationLabels: z.boolean().optional(),
         }),
       )
       .min(1)
@@ -51,6 +83,7 @@ export const documentSchema = z
         z.object({ id, source: id, target: id, relation: z.enum(relations) }),
       )
       .max(5000),
+    syncMeta: syncMetadataSchema.optional(),
   })
   .superRefine((d, ctx) => {
     const folders = new Map(d.folders.map((f) => [f.id, f]));
@@ -89,7 +122,7 @@ export const documentSchema = z
     for (const e of d.edges) {
       const a = nodes.get(e.source),
         b = nodes.get(e.target);
-      const key = e.source + "|" + e.target;
+      const key = JSON.stringify([e.source, e.target]);
       if (
         !a ||
         !b ||

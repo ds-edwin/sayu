@@ -1,14 +1,30 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { blankWorkspace, documentSchema, type Workspace } from "@/lib/model";
-import { readLocal, prepareAccountWorkspace, writeLocal, LocalRevisionConflict } from "@/lib/local-store";
+import { readLocal, prepareAccountWorkspace, writeLocal, LocalRevisionConflict, getSetting, setSetting } from "@/lib/local-store";
 import { DocumentHistory } from "@/lib/history";
+import { mergeFirebaseWorkspaces, stampWorkspace } from "@/lib/firebase-merge";
+
+let actorPromise: Promise<string> | undefined;
+function workspaceActor() {
+  if (!actorPromise) actorPromise = (async () => {
+    const stored = await getSetting<string>("firebase-sync-actor");
+    if (typeof stored === "string" && /^[a-f0-9-]{36}$/i.test(stored)) return stored;
+    const actor = crypto.randomUUID();
+    await setSetting("firebase-sync-actor", actor);
+    return actor;
+  })().catch(problem => { actorPromise = undefined; throw problem; });
+  return actorPromise;
+}
+
+export type WorkspaceReplaceOptions = { source?: "local" | "remote" };
 export function useWorkspace(scope?: string) {
   // Each callback retains its own account's references, even if a late database
   // operation completes after the signed-in account has changed.
   const binding = useMemo(() => ({
     active: true,
     loadVersion: 0,
+    actor: "",
     history: { current: new DocumentHistory<Workspace>() },
     current: { current: null as Workspace | null },
     revision: { current: 0 },
@@ -33,7 +49,9 @@ export function useWorkspace(scope?: string) {
     setStatus("불러오는 중");
     setError("");
     try {
-      let local = scope === undefined ? await readLocal() : await prepareAccountWorkspace(scope);
+      let [local, actor] = await Promise.all([
+        scope === undefined ? readLocal() : prepareAccountWorkspace(scope), workspaceActor(),
+      ]);
       if (!local) {
         let initial = blankWorkspace();
         try {
@@ -58,6 +76,7 @@ export function useWorkspace(scope?: string) {
       }
       if (!binding.active || loadVersion !== binding.loadVersion) return;
       if (!local) throw Error("기기 저장소를 열 수 없습니다.");
+      binding.actor = actor;
       const parsed = documentSchema.parse(local.document);
       current.current = parsed;
       persisted.current = JSON.stringify(parsed);
@@ -142,29 +161,38 @@ export function useWorkspace(scope?: string) {
     };
   }, [binding, load, flush]);
   const replace = useCallback(
-    async (next: Workspace, expected?: string) => {
+    async (next: Workspace, expected?: string, options: WorkspaceReplaceOptions = {}) => {
       const before = await flush();
       if (expected !== undefined && JSON.stringify(before) !== expected)
         throw Error("동기화 중 편집되었습니다. 다시 동기화하세요.");
-      const parsed = documentSchema.parse(next);
+      const remote = options.source === "remote";
+      const input = documentSchema.parse(next);
+      const parsed = remote ? input : documentSchema.parse(stampWorkspace(before, input, binding.actor));
       busy.current = true;
       try {
         revision.current = await writeLocal(parsed, revision.current, true, scope);
         persisted.current = JSON.stringify(parsed);
-        if (JSON.stringify(current.current) !== JSON.stringify(before)) {
+        const editedDuringWrite = JSON.stringify(current.current) !== JSON.stringify(before);
+        if (editedDuringWrite && (!remote || !current.current)) {
           if (binding.active) timer.current = setTimeout(() => void save(), 100);
-          throw Error(
-            "동기화 중 추가 편집이 발생했습니다. 편집 내용은 유지됩니다. 다시 동기화하세요.",
-          );
+          throw Error("불러오는 동안 추가 편집이 발생했습니다. 편집 내용은 유지됩니다. 다시 불러오세요.");
         }
-        current.current = parsed;
+        try {
+          // An incoming snapshot may finish writing while the user keeps typing.
+          // Preserve both changes; the controller flushes this merged draft next.
+          current.current = editedDuringWrite ? mergeFirebaseWorkspaces(before, current.current!, parsed) : parsed;
+        } catch (problem) {
+          if (binding.active) timer.current = setTimeout(() => void save(), 100);
+          throw problem;
+        }
         history.current.reset();
         if (binding.active) {
-          setDocument(parsed);
+          setDocument(current.current);
           setGeneration(value => value + 1);
           refreshHistory((v) => v + 1);
           setError("");
-          setStatus("기기에 저장됨");
+          setStatus(editedDuringWrite ? "저장 대기" : "기기에 저장됨");
+          if (editedDuringWrite) timer.current = setTimeout(() => void save(), 100);
         }
       } finally {
         busy.current = false;
@@ -175,7 +203,7 @@ export function useWorkspace(scope?: string) {
   const update = useCallback(
     (fn: (d: Workspace) => Workspace, group?: string) => {
       if (!binding.active || !current.current) return;
-      const next = fn(current.current);
+      const next = stampWorkspace(current.current, fn(structuredClone(current.current)), binding.actor);
       if (!history.current.record(current.current, next, group)) return;
       refreshHistory((v) => v + 1);
       current.current = next;
@@ -191,8 +219,9 @@ export function useWorkspace(scope?: string) {
       if (!binding.active || !current.current) return;
       const next = history.current[direction](current.current);
       if (!next) return;
-      current.current = next;
-      setDocument(next);
+      const stamped = stampWorkspace(current.current, next, binding.actor);
+      current.current = stamped;
+      setDocument(stamped);
       setStatus("저장 대기");
       refreshHistory((v) => v + 1);
       if (timer.current) clearTimeout(timer.current);

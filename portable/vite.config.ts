@@ -11,5 +11,11 @@ export default defineConfig({
     outDir: "../portable-dist",
     emptyOutDir: true,
     assetsDir: "pwa-assets",
+    rolldownOptions: {
+      input: {
+        app: fileURLToPath(new URL("index.html", import.meta.url)),
+        emailAction: fileURLToPath(new URL("email-action.html", import.meta.url)),
+      },
+    },
   },
 });

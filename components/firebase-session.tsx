@@ -99,7 +99,8 @@ function AccountDialog({ user, configured, setupError, close, beforeAuth, afterA
       {user ? <><p><strong>{user.email}</strong></p><p>PC와 iPad에서 이 이메일로 로그인하면 같은 작업실을 사용합니다.</p>
         <p>오프라인 편집은 이 기기에 저장되며, 인터넷에 다시 연결하면 동기화합니다. 앱을 열어 둔 동안 동기화됩니다.</p>
         <button disabled={busy} onClick={() => void run(signOut)}>로그아웃</button></> : <>
-        <p>같은 이메일로 로그인해 모든 기기에서 생각을 이어가세요.</p>
+        <p>사유에서 이메일과 비밀번호로 계정을 만드세요. 같은 계정으로 모든 기기에서 생각을 이어갈 수 있습니다.</p>
+        <p className="firebase-note">Gmail 주소도 사용할 수 있습니다. Google 계정 로그인과는 별개이며, 사유용 비밀번호를 설정합니다.</p>
         <p className="firebase-note">처음 연결하는 계정에 이 기기의 기존 내용을 복사합니다. 원본과 복원 기록은 유지됩니다.</p>
         {!configured ? <p role="status">{setupError}</p> : <form onSubmit={event => { event.preventDefault(); void run(() => mode === "create" ? createAccount(email, password) : signInEmail(email, password)); }}>
           <label>이메일<input type="email" autoComplete="username" required value={email} onChange={e => setEmail(e.target.value)} /></label>
