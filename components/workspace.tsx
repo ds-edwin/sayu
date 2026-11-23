@@ -242,6 +242,7 @@ export default function Workspace({ scope }: { scope?: string }) {
       n.id === id && (view === "map" ? n.mapId === activeMap : n.mapId === null) &&
       (kindFilter === "전체" || n.kind === kindFilter))),
     generation,
+    contextKey: activeMap,
     blocked: capture || newMap,
     inMap: view === "map",
     paste: (clipboard, cut, offset) => {
@@ -1011,6 +1012,8 @@ export default function Workspace({ scope }: { scope?: string }) {
                   flow.current = v;
                 }}
                 onNodeClick={(e, n) => {
+                  // Safari taps may leave keyboard focus in the previous text editor.
+                  if (e.currentTarget instanceof HTMLElement) e.currentTarget.focus({ preventScroll: true });
                   if (e.ctrlKey || e.metaKey) {
                     setSelected(null);
                     setEdgeId(null);
