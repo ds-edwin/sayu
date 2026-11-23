@@ -4,7 +4,8 @@ export const relations = ["관련", "지지", "반박", "원인", "구체화"] a
 const id = z.string().min(1).max(100);
 const nodeSchema = z.object({
   id,
-  title: z.string().trim().min(1).max(200),
+  // Clearing a title is a valid editing draft; autosave must preserve it before blur.
+  title: z.string().max(200),
   kind: z.enum(kinds),
   mapId: id.nullable(),
   body: z.string().max(200000),

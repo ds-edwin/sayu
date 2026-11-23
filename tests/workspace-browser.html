@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>사유 실제 저장 훅 회귀 검증</title>
+  <style>
+    body {max-width:880px;margin:32px auto;padding:0 20px;font:15px/1.7 system-ui,sans-serif;color:#24223a;background:#faf9fd;}
+    button {padding:10px 16px;font:inherit;cursor:pointer;} button:disabled {cursor:default;opacity:.5;}
+    pre {padding:16px;border:1px solid #d8d2e5;border-radius:10px;background:white;white-space:pre-wrap;overflow-wrap:anywhere;}
+    code {overflow-wrap:anywhere;} [data-state="passed"] {border-color:#248456;} [data-state="failed"] {border-color:#b43e58;}
+  </style>
+</head>
+<body>
+  <h1>실제 useWorkspace 저장 회귀 검증</h1>
+  <p>사용한 적 없는 전용 localhost 포트에서만 실행하세요. 예: 저장소 루트에서 아래 서버를 연 뒤 <code>http://127.0.0.1:4189/tests/workspace-browser.html</code>로 접속합니다.</p>
+  <pre>node node_modules/vite/bin/vite.js . --config portable/vite.config.ts --host 127.0.0.1 --port 4189 --strictPort</pre>
+  <p>시작 시 기존 IndexedDB 또는 서비스 워커가 있으면 중단합니다. 검증용 DB는 삭제하지 않으며 재검증에는 새로운 포트를 사용하세요. 실제 OneDrive 인증·업로드나 물리 iPad 검증은 포함하지 않습니다.</p>
+  <div id="root"></div>
+  <script type="module" src="./workspace-browser.tsx"></script>
+</body>
+</html>

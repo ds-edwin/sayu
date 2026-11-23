@@ -81,6 +81,24 @@ test("initial differences and concurrent edits require selection and preserve ev
   assert.deepEqual(await Promise.all(known.map(name => readFile(join(path, name), "utf8"))), original);
   assert.equal((await readdir(path)).length, 5);
 });
+test("an empty title can sync between devices without losing its body, edges or history", async () => {
+  const { path, handle } = await diskFolder();
+  const original = exampleWorkspace(), a = device(original), b = device(original);
+  await a.sync(handle);
+  await b.sync(handle);
+  const draft = structuredClone(original);
+  draft.nodes[0].title = "";
+  a.edit(draft);
+  await a.sync(handle);
+  await b.sync(handle);
+  assert.deepEqual(b.document, draft);
+  draft.nodes[0].title = "다시 입력한 제목";
+  a.edit(structuredClone(draft));
+  await a.sync(handle);
+  await b.sync(handle);
+  assert.deepEqual(b.document, draft);
+  assert.equal((await readdir(path)).length, 3);
+});
 test("deleted history and malformed snapshots stop sync without replacing data", async () => {
   const { path, handle } = await diskFolder();
   const a = device(blankWorkspace());

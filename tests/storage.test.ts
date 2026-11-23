@@ -8,6 +8,7 @@ import {
   parsePortable,
   type LocalWorkspace,
   archiveCurrentWorkspace,
+  LocalRevisionConflict,
 } from "../lib/local-store.ts";
 import {
   findHeads,
@@ -25,7 +26,7 @@ test("local revision guard prevents a stale tab from overwriting saved changes",
   const rev = await writeLocal(initial, 0);
   const updated = exampleWorkspace();
   assert.equal(await writeLocal(updated, rev), rev + 1);
-  await assert.rejects(writeLocal(initial, rev), /다른 창/);
+  await assert.rejects(writeLocal(initial, rev), LocalRevisionConflict);
   assert.deepEqual(
     (await getSetting<LocalWorkspace>("workspace"))?.document,
     updated,
@@ -47,6 +48,36 @@ test("portable imports accept original JSON and backups; reject unsupported vers
   assert.throws(() =>
     parsePortable({ format: "sayu-workspace", version: 2, document }),
   );
+});
+test("empty and whitespace title drafts survive local save, backup and remote snapshots", async () => {
+  const document = exampleWorkspace();
+  document.nodes[0].title = "";
+  document.nodes[1].title = "  \n  ";
+  const before = structuredClone(document);
+  const revision = (await getSetting<LocalWorkspace>("workspace"))!.revision;
+  await writeLocal(document, revision);
+  assert.deepEqual((await getSetting<LocalWorkspace>("workspace"))!.document, before);
+  assert.deepEqual(parsePortable({ format: "sayu-workspace", version: 1, document }), before);
+  assert.deepEqual(parseSnapshot({ format: "sayu-snapshot", version: 1, id: a, parents: [],
+    createdAt: new Date().toISOString(), document }, a).document, before);
+  assert.deepEqual(document, before, "validation must not mutate the editable draft");
+
+  document.nodes[0].title = "제목 다시 입력";
+  await writeLocal(document, revision + 1);
+  assert.deepEqual((await getSetting<LocalWorkspace>("workspace"))!.document, document);
+});
+test("invalid data leaves the saved revision intact and a corrected draft can be retried", async () => {
+  const saved = (await getSetting<LocalWorkspace>("workspace"))!;
+  const draft = structuredClone(saved.document);
+  draft.nodes[0].title = "a".repeat(201);
+  await assert.rejects(writeLocal(draft, saved.revision), error => {
+    assert.ok(!(error instanceof LocalRevisionConflict));
+    return true;
+  });
+  assert.deepEqual(await getSetting("workspace"), saved);
+  draft.nodes[0].title = "수정 후 저장";
+  await writeLocal(draft, saved.revision);
+  assert.deepEqual((await getSetting<LocalWorkspace>("workspace"))!.document, draft);
 });
 test("immutable remote history preserves concurrent branches and resolves with a new version", () => {
   const names = [

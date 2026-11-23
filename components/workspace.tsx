@@ -100,7 +100,7 @@ function KnowledgeCard({ data, selected }: NodeProps<CardNode>) {
         <KindIcon kind={n.kind} size={20} />
         <span className="node-status">{n.confidence}</span>
       </div>
-      <strong>{n.title}</strong>
+      <strong>{n.title.trim() || "제목 없는 생각"}</strong>
       <div className="node-bottom">
         {n.tags.length
           ? n.tags.map((t) => "#" + t).join(" ")
@@ -746,7 +746,7 @@ export default function Workspace() {
                     {n.kind}
                   </span>
                   <div>
-                    <b>{n.title}</b>
+                    <b>{n.title.trim() || "제목 없는 생각"}</b>
                     <small>
                       {doc.maps.find((m) => m.id === n.mapId)?.name ?? "Inbox"}{" "}
                       · {textBody(n.body).slice(0, 60)}
@@ -875,7 +875,7 @@ export default function Workspace() {
                           <FileText size={20} />
                         </span>
                         <div>
-                          <strong>{n.title}</strong>
+                          <strong>{n.title.trim() || "제목 없는 생각"}</strong>
                           <p>
                             {textBody(n.body) ||
                               "내용을 더해 생각을 발전시켜 보세요."}
@@ -939,7 +939,7 @@ export default function Workspace() {
                     >
                       {n.kind}
                     </span>
-                    <strong>{n.title}</strong>
+                    <strong>{n.title.trim() || "제목 없는 생각"}</strong>
                     <p>{textBody(n.body).slice(0, 100) || "내용 없음"}</p>
                     <small>
                       {n.confidence} · {n.tags.map((t) => "#" + t).join(" ")}
@@ -1145,6 +1145,7 @@ export default function Workspace() {
                 <textarea
                   className="node-title-input"
                   aria-label="노드 제목"
+                  placeholder="제목 없는 생각"
                   value={item.title}
                   maxLength={200}
                   rows={2}
@@ -1282,7 +1283,7 @@ export default function Workspace() {
                         )
                         .map((n) => (
                           <option key={n.id} value={n.id}>
-                            {n.title}
+                            {n.title.trim() || "제목 없는 생각"}
                           </option>
                         ))}
                     </select>

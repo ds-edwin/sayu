@@ -1,5 +1,10 @@
 import { documentSchema, type Workspace } from "./model.ts";
 export type LocalWorkspace = { document: Workspace; revision: number };
+export class LocalRevisionConflict extends Error {
+  constructor() {
+    super("다른 창에서 변경했습니다. 현재 작업을 JSON으로 내보낸 후 다시 불러오세요.");
+  }
+}
 let opening: Promise<IDBDatabase> | undefined;
 function database() {
   return (opening ??= new Promise<IDBDatabase>((resolve, reject) => {
@@ -67,9 +72,7 @@ export async function writeLocal(
     r.onsuccess = () => {
       const current = r.result as LocalWorkspace | undefined;
       if ((current?.revision ?? 0) !== expectedRevision) {
-        customError = Error(
-          "다른 창에서 변경했습니다. 현재 작업을 JSON으로 내보낸 후 다시 불러오세요.",
-        );
+        customError = new LocalRevisionConflict();
         tx.abort();
         return;
       }

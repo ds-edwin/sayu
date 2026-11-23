@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { blankWorkspace, documentSchema, type Workspace } from "@/lib/model";
-import { getSetting, writeLocal, type LocalWorkspace } from "@/lib/local-store";
+import { getSetting, writeLocal, LocalRevisionConflict, type LocalWorkspace } from "@/lib/local-store";
 import { DocumentHistory } from "@/lib/history";
 export function useWorkspace() {
   const history = useRef(new DocumentHistory<Workspace>());
@@ -69,10 +69,12 @@ export function useWorkspace() {
     if (!current.current || busy.current || conflict.current) return;
     const snapshot = JSON.stringify(current.current);
     if (snapshot === persisted.current) {
+      setError("");
       setStatus("기기에 저장됨");
       return;
     }
     busy.current = true;
+    let succeeded = false;
     setStatus("저장 중…");
     try {
       revision.current = await writeLocal(
@@ -80,6 +82,7 @@ export function useWorkspace() {
         revision.current,
       );
       persisted.current = snapshot;
+      succeeded = true;
       setError("");
       setStatus(
         JSON.stringify(current.current) === snapshot
@@ -89,11 +92,14 @@ export function useWorkspace() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "기기 저장 실패");
       setStatus("저장 실패");
-      conflict.current = true;
+      // Validation or storage errors can be corrected and retried. Only a stale
+      // tab must stop writing until its newer on-disk revision is reconciled.
+      conflict.current = e instanceof LocalRevisionConflict;
     } finally {
       busy.current = false;
       if (
         !conflict.current &&
+        (succeeded || JSON.stringify(current.current) !== snapshot) &&
         JSON.stringify(current.current) !== persisted.current
       )
         timer.current = setTimeout(persist, 100);
