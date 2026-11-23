@@ -52,6 +52,8 @@ import MapTree from "./map-tree";
 import { removeNodes, copyNodes, copyMap, removeMap as removeWorkspaceMap, moveMapToFolder, moveInboxNode } from "@/lib/graph-operations";
 import { archiveCurrentWorkspace } from "@/lib/local-store";
 import { relationAppearance } from "@/lib/graph-appearance";
+import { edgeEndpointOffsets } from "@/lib/edge-spacing";
+import { edgeTypes, type SpacedEdge } from "./spaced-edge";
 import { useWorkspaceDrag } from "./use-workspace-drag";
 import { useNodeClipboard } from "./use-node-clipboard";
 import { pasteNodeClipboard } from "@/lib/node-clipboard";
@@ -555,16 +557,20 @@ export default function Workspace({ scope }: { scope?: string }) {
       selected: selectedIds.includes(n.id),
     }));
   const visibleIds = new Set(nodes.map((n) => n.id));
-  const edges = (doc?.edges ?? [])
-    .filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target))
+  const visibleEdges = (doc?.edges ?? [])
+    .filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target));
+  const endpointOffsets = edgeEndpointOffsets(nodes, visibleEdges, measurements);
+  const edges: SpacedEdge[] = visibleEdges
     .map((e) => {
       const appearance = relationAppearance[e.relation];
+      const offsets = endpointOffsets.get(e.id);
       return ({
       ...e,
       selected: e.id === edgeId,
       ariaLabel: `${doc?.nodes.find(n => n.id === e.source)?.title} → ${doc?.nodes.find(n => n.id === e.target)?.title}: ${e.relation}`,
       label: showRelationLabels ? `${appearance.symbol} ${e.relation}` : undefined,
-      type: appearance.path,
+      type: "spaced",
+      data: { path: appearance.path, sourceOffset: offsets?.source ?? 0, targetOffset: offsets?.target ?? 0 },
       interactionWidth: 24,
       markerEnd: {
         type: appearance.closed ? MarkerType.ArrowClosed : MarkerType.Arrow,
@@ -1000,6 +1006,7 @@ export default function Workspace({ scope }: { scope?: string }) {
                 nodes={nodes}
                 edges={edges}
                 nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
                 onInit={(v) => {
                   flow.current = v;
                 }}
